@@ -27,8 +27,8 @@ contract ICPEscrowSrc is Escrow {
     /// @notice icp transaction hash for verification (optional)
     mapping(bytes32 => string) public icpTxHashes;
 
-    event icpAddressRecorded(bytes32 indexed hashlock, string btcAddress);
-    event icpTxHashRecorded(bytes32 indexed hashlock, string btcTxHash);
+    event icpAddressRecorded(bytes32 indexed hashlock, string icpAddress);
+    event icpTxHashRecorded(bytes32 indexed hashlock, string icpTxHash);
 
     constructor(uint32 rescueDelay, IERC20 accessToken) BaseEscrow(rescueDelay, accessToken) {}
 
@@ -98,12 +98,12 @@ contract ICPEscrowSrc is Escrow {
      * @notice Records icp address for the swap
      * @dev Links icp address to escrow for verification
      * @param hashlock The escrow hashlock
-     * @param btcAddress The icp address where funds should be sent
+     * @param icpAddress The icp address where funds should be sent
      * @param immutables The escrow immutables
      */
     function recordicpAddress(
         bytes32 hashlock,
-        string calldata btcAddress,
+        string calldata icpAddress,
         Immutables calldata immutables
     )
         external
@@ -114,20 +114,20 @@ contract ICPEscrowSrc is Escrow {
             revert InvalidCaller();
         }
 
-        icpAddresses[hashlock] = btcAddress;
-        emit icpAddressRecorded(hashlock, btcAddress);
+        icpAddresses[hashlock] = icpAddress;
+        emit icpAddressRecorded(hashlock, icpAddress);
     }
 
     /**
      * @notice Records icp transaction hash for verification
      * @dev Optional function to link icp transaction to escrow
      * @param hashlock The escrow hashlock
-     * @param btcTxHash The icp transaction hash
+     * @param icpTxHash The icp transaction hash
      * @param immutables The escrow immutables
      */
     function recordicpTx(
         bytes32 hashlock,
-        string calldata btcTxHash,
+        string calldata icpTxHash,
         Immutables calldata immutables
     )
         external
@@ -138,8 +138,8 @@ contract ICPEscrowSrc is Escrow {
             revert InvalidCaller();
         }
 
-        icpTxHashes[hashlock] = btcTxHash;
-        emit icpTxHashRecorded(hashlock, btcTxHash);
+        icpTxHashes[hashlock] = icpTxHash;
+        emit icpTxHashRecorded(hashlock, icpTxHash);
     }
 
     /**

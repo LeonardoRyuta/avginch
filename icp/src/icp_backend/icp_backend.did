@@ -1,3 +1,182 @@
+type ICPAddress = record {
+    address : text;
+};
+
+type Timelocks = record {
+    withdrawal : nat64;
+    public_withdrawal : nat64;
+    cancellation : nat64;
+    deployed_at : nat64;
+};
+
+type EscrowImmutables = record {
+    order_hash : blob;
+    hashlock : blob;
+    maker : text;
+    taker : text;
+    token : text;
+    amount : nat64;
+    safety_deposit : nat64;
+    timelocks : Timelocks;
+};
+
+type EscrowState = variant {
+    Active;
+    Completed;
+    Cancelled;
+    Rescued;
+};
+
+type ICPEscrow = record {
+    immutables : EscrowImmutables;
+    state : EscrowState;
+    icp_tx_hash : opt text;
+    evm_address : opt text;
+    created_at : nat64;
+    completed_at : opt nat64;
+    secret_hash : opt blob;
+};
+
+type EscrowType = variant {
+    Source;
+    Destination;
+};
+
+type EscrowConfig = record {
+    rescue_delay : nat64;
+    min_amount : nat64;
+    max_amount : nat64;
+    creation_fee : nat64;
+    treasury : principal;
+    min_safety_deposit : nat64;
+};
+
+type EscrowMetrics = record {
+    total_escrows_created : nat64;
+    total_escrows_completed : nat64;
+    total_escrows_cancelled : nat64;
+    total_volume_icp : nat64;
+    total_fees_collected : nat64;
+    active_escrows_count : nat64;
+};
+
+type StorageStats = record {
+    escrows_count : nat;
+    events_count : nat;
+    authorized_principals_count : nat;
+};
+
+type EscrowEvent = variant {
+    EscrowCreated : record {
+        hashlock : blob;
+        escrow_type : EscrowType;
+        maker : text;
+        taker : text;
+        amount : nat64;
+        timestamp : nat64;
+    };
+    EscrowWithdrawal : record {
+        hashlock : blob;
+        withdrawer : principal;
+        secret : blob;
+        timestamp : nat64;
+    };
+    EscrowCancelled : record {
+        hashlock : blob;
+        canceller : principal;
+        timestamp : nat64;
+    };
+    FundsRescued : record {
+        hashlock : blob;
+        rescuer : principal;
+        amount : nat64;
+        timestamp : nat64;
+    };
+    ICPTxRecorded : record {
+        hashlock : blob;
+        tx_hash : text;
+        timestamp : nat64;
+    };
+    EVMAddressRecorded : record {
+        hashlock : blob;
+        address : text;
+        timestamp : nat64;
+    };
+};
+
+type EscrowError = variant {
+    InvalidCaller;
+    InvalidSecret;
+    InvalidTime;
+    InvalidAmount;
+    InvalidState;
+    EscrowNotFound;
+    TransferFailed;
+    Unauthorized;
+    InvalidHashlock;
+    InsufficientBalance;
+    InvalidAddress;
+    DuplicateEscrow;
+    ConfigError;
+};
+
+type Result = variant {
+    Ok : blob;
+    Err : EscrowError;
+};
+
+type Result_1 = variant {
+    Ok;
+    Err : EscrowError;
+};
+
+type Result_2 = variant {
+    Ok : nat64;
+    Err : EscrowError;
+};
+
+type Result_3 = variant {
+    Ok : vec principal;
+    Err : EscrowError;
+};
+
 service : {
-    "greet": (text) -> (text) query;
+    // Escrow creation
+    "create_src_escrow" : (EscrowImmutables) -> (Result);
+    "create_dst_escrow" : (EscrowImmutables) -> (Result);
+    
+    // Withdrawals
+    "withdraw_src" : (blob, blob) -> (Result_1);
+    "withdraw_dst" : (blob, blob) -> (Result_1);
+    "public_withdraw" : (blob, blob, EscrowType) -> (Result_1);
+    
+    // Cancellation and rescue
+    "cancel_escrow" : (blob, EscrowType) -> (Result_1);
+    "rescue_funds" : (blob, nat64) -> (Result_1);
+    
+    // Record keeping
+    "record_icp_tx_hash" : (blob, text) -> (Result_1);
+    "record_evm_address" : (blob, text) -> (Result_1);
+    
+    // Queries
+    "get_escrow" : (blob) -> (opt ICPEscrow) query;
+    "get_icp_tx_hash" : (blob) -> (opt text) query;
+    "get_evm_address" : (blob) -> (opt text) query;
+    "get_config" : () -> (EscrowConfig) query;
+    "get_escrows_for_principal" : (text) -> (vec record { blob; ICPEscrow }) query;
+    "get_recent_events" : (nat32) -> (vec EscrowEvent) query;
+    "get_events_for_hashlock" : (blob) -> (vec EscrowEvent) query;
+    "get_metrics" : () -> (EscrowMetrics) query;
+    "get_balance" : () -> (Result_2);
+    "get_storage_stats" : () -> (StorageStats) query;
+    
+    // Admin functions
+    "set_config" : (EscrowConfig) -> (Result_1);
+    "add_authorized_principal" : (principal) -> (Result_1);
+    "remove_authorized_principal" : (principal) -> (Result_1);
+    "get_authorized_principals" : () -> (Result_3) query;
+    
+    // Utility functions
+    "greet" : (text) -> (text) query;
+    "get_canister_info" : () -> (text) query;
 }
