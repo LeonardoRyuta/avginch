@@ -84,8 +84,8 @@ impl Default for EscrowConfig {
             rescue_delay: 7 * 24 * 60 * 60 * 1_000_000_000, // 7 days in nanoseconds
             min_amount: 1_000,                               // 0.00001 ICP
             max_amount: 100_000_000_000,                    // 1000 ICP
-            creation_fee: 10_000,                           // 0.0001 ICP
-            treasury: Principal::anonymous(),
+            creation_fee: 0,                           // 0.0001 ICP
+            treasury: Principal::from_text("f5hu5-c5eqs-4m2bm-fxb27-5mnk2-lpbva-l3tb5-7xv5p-w65wt-a3uyd-lqe").unwrap(),
             min_safety_deposit: 100_000,                    // 0.001 ICP
         }
     }
@@ -107,6 +107,10 @@ pub enum EscrowError {
     InvalidAddress,
     DuplicateEscrow,
     ConfigError,
+    CanisterCallSuccLedgerError,
+    CanisterCallError,
+    CanisterCallAndLedgerSuccConversionError,
+    
 }
 
 pub type Result<T> = std::result::Result<T, EscrowError>;

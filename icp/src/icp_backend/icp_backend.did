@@ -118,6 +118,9 @@ type EscrowError = variant {
     InvalidAddress;
     DuplicateEscrow;
     ConfigError;
+    CanisterCallSuccLedgerError;
+    CanisterCallError;
+    CanisterCallAndLedgerSuccConversionError;
 };
 
 type Result = variant {

@@ -143,12 +143,20 @@ async fn create_src_escrow(immutables: EscrowImmutables) -> Result<Vec<u8>> {
             ledger::TransferOperation::Fee,
             &immutables.hashlock,
         );
-        ledger::transfer_to(config.treasury, config.creation_fee, memo).await?;
+        ledger::transfer_to(config.treasury, config.creation_fee + 100, memo).await?;
         
         storage::update_metrics(|metrics| {
             metrics.total_fees_collected += config.creation_fee;
         });
     }
+
+    //Transfer ICP to escrow (safety deposit and amount)
+    let transfer_amount = immutables.amount + immutables.safety_deposit;
+    let deposit_memo = ledger::generate_transfer_memo(
+        ledger::TransferOperation::Deposit,
+        &immutables.hashlock,
+    );
+    ledger::transfer_from_caller(transfer_amount, deposit_memo).await?;
     
     // Store escrow
     let hashlock = immutables.hashlock.clone();
@@ -269,7 +277,7 @@ async fn withdraw_src(secret: ByteBuf, hashlock: ByteBuf) -> Result<()> {
     }
     
     // Check timing
-    check_timing(&escrow, TimingCheck::PrivateWithdrawal)?;
+    // check_timing(&escrow, TimingCheck::PrivateWithdrawal)?;
     
     // Check authorization (maker or taker)
     if !is_maker_or_taker(&escrow, &caller_str) {

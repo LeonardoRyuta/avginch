@@ -4,6 +4,13 @@ use num_traits::ToPrimitive;
 
 use crate::types::{EscrowError, Result};
 
+use ic_cdk_macros::*;
+use ic_ledger_types::{
+    AccountIdentifier, BlockIndex, Memo, Subaccount, Tokens, DEFAULT_SUBACCOUNT,
+    MAINNET_LEDGER_CANISTER_ID
+};
+
+
 // Define Candid-compatible wrapper types for ICP ledger
 #[derive(CandidType, Deserialize, Clone, Debug)]
 struct TransferArgsCanister {
@@ -22,7 +29,7 @@ struct AccountBalanceArgs {
 
 /// ICP Ledger canister ID (mainnet)
 fn get_icp_ledger_canister_id() -> Principal {
-    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").unwrap() // ICP Ledger canister ID
+    Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").unwrap() // ICP Ledger canister ID
 }
 
 /// Standard ICP transfer fee (0.0001 ICP)
@@ -38,72 +45,52 @@ fn get_account_string(principal: &Principal) -> String {
 
 /// Transfer ICP from the caller to this canister
 pub async fn transfer_from_caller(amount: u64, memo: u64) -> Result<u64> {
-    let canister_id = id();
-    let account_string = get_account_string(&canister_id);
-    
-    // Create candid-compatible transfer arguments
-    let transfer_args = TransferArgsCanister {
-        memo,
-        amount: Nat::from(amount),
-        fee: Nat::from(TRANSFER_FEE),
+    let canister_id = ic_cdk::api::canister_self();
+    let to_subaccount = DEFAULT_SUBACCOUNT;
+    let transfer_args = ic_ledger_types::TransferArgs {
+        memo: Memo(memo),
+        amount: Tokens::from_e8s(amount),
+        fee: Tokens::from_e8s(TRANSFER_FEE),
         from_subaccount: None,
-        to: account_string,
+        to: AccountIdentifier::new(&canister_id, &to_subaccount),
         created_at_time: None,
     };
 
-    // Call the ledger
-    let result: std::result::Result<(std::result::Result<Nat, String>,), (ic_cdk::api::call::RejectionCode, String)> = call(
-        get_icp_ledger_canister_id(),
-        "transfer",
-        (transfer_args,)
-    ).await;
-
-    match result {
-        Ok((Ok(block_index),)) => {
-            // Convert Nat to u64
-            match block_index.0.to_u64() {
-                Some(idx) => Ok(idx),
-                None => Err(EscrowError::TransferFailed),
-            }
-        }
-        Ok((Err(_),)) => Err(EscrowError::TransferFailed),
-        Err(_) => Err(EscrowError::TransferFailed),
+    match ic_ledger_types::transfer(get_icp_ledger_canister_id(), &transfer_args).await {
+        Ok(result) => result.map_err(|e| {
+            ic_cdk::api::debug_print(format!("Canister call error: {:?}", e));
+            EscrowError::CanisterCallSuccLedgerError
+        }),
+        Err(e) => {
+            ic_cdk::api::debug_print(format!("Canister call error: {:?}", e));
+            Err(EscrowError::CanisterCallError)
+        },
     }
 }
 
 /// Transfer ICP from this canister to a recipient
 pub async fn transfer_to(recipient: Principal, amount: u64, memo: u64) -> Result<u64> {
-    if amount < MIN_TRANSFER_AMOUNT {
-        return Err(EscrowError::InvalidAmount);
-    }
-
-    let account_string = get_account_string(&recipient);
-
-    let transfer_args = TransferArgsCanister {
-        memo,
-        amount: Nat::from(amount),
-        fee: Nat::from(TRANSFER_FEE),
+    let to_subaccount = DEFAULT_SUBACCOUNT;
+    let transfer_args = ic_ledger_types::TransferArgs {
+        memo: Memo(memo),
+        amount: Tokens::from_e8s(amount),
+        fee: Tokens::from_e8s(TRANSFER_FEE),
         from_subaccount: None,
-        to: account_string,
+        to: AccountIdentifier::new(&recipient, &to_subaccount),
         created_at_time: None,
     };
 
-    let result: std::result::Result<(std::result::Result<Nat, String>,), (ic_cdk::api::call::RejectionCode, String)> = call(
-        get_icp_ledger_canister_id(),
-        "transfer",
-        (transfer_args,)
-    ).await;
-
-    match result {
-        Ok((Ok(block_index),)) => {
-            match block_index.0.to_u64() {
-                Some(idx) => Ok(idx),
-                None => Err(EscrowError::TransferFailed),
-            }
-        }
-        Ok((Err(_),)) => Err(EscrowError::TransferFailed),
-        Err(_) => Err(EscrowError::TransferFailed),
+    match ic_ledger_types::transfer(get_icp_ledger_canister_id(), &transfer_args).await {
+        Ok(result) => result.map_err(|e| {
+            ic_cdk::api::debug_print(format!("Canister call error: {:?}", e));
+            EscrowError::CanisterCallSuccLedgerError
+        }),
+        Err(e) => {
+            ic_cdk::api::debug_print(format!("Canister call error: {:?}", e));
+            Err(EscrowError::CanisterCallError)
+        },
     }
+
 }
 
 /// Get ICP balance of this canister
