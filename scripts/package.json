@@ -1,5 +1,7 @@
 {
   "dependencies": {
+    "@dfinity/agent": "^3.1.0",
+    "@dfinity/auth-client": "^3.1.0",
     "ethers": "^6.15.0"
   },
   "devDependencies": {

@@ -2,3 +2,10 @@ example of creating src escrow
 
 dfx canister call icp_backend create_src_escrow '(record {maker = "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae";taker = "f5hu5-c5eqs-4m2bm-fxb27-5mnk2-lpbva-l3tb5-7xv5p-w65wt-a3uyd-lqe";token = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";amount = 10000000;safety_deposit = 150000;hashlock = vec {34; 223; 55; 223; 136; 196; 16; 210; 197; 82; 136; 159; 116; 5; 184; 72; 198; 165; 203; 129; 190; 213; 64; 118; 101; 199; 44; 45; 35; 42; 180; 114};order_hash = vec {1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17; 18; 19; 20; 21
 ; 22; 23; 24; 25; 26; 27; 28; 29; 33; 31; 32};timelocks = record {deployed_at = 0;withdrawal = 3600;public_withdrawal = 7200;cancellation = 86400;};})'
+
+
+deploying II
+
+dfx deploy internet_identity --argument '(null)'
+
+dfx ledger transfer 151982e19fdec075d00ac7ec856ed30edf7393cb8e71a2f04f3ba18467daaaa0 --memo 12345 --icp 3

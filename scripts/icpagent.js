@@ -1,10 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import { Actor, HttpAgent } from '@dfinity/agent';
 
-/**
- * Generate a cryptographic secret and its SHA256 hash
- * @returns {Object} Object containing secret and hashlock
- */
 function generateSecret() {
     // Generate 32 bytes of random data for the secret
     const secret = randomBytes(32);
@@ -18,23 +14,6 @@ function generateSecret() {
     };
 }
 
-/**
- * Create source escrow for ICP→EVM swaps
- * @param {Object} params - Escrow parameters
- * @param {string} params.orderHash - 32-byte order hash from EVM (hex string)
- * @param {string} params.maker - EVM address of maker (initiator)
- * @param {string} params.taker - EVM address of taker (counterparty)
- * @param {string} params.token - EVM token address (0x0000...0000 for ETH)
- * @param {bigint} params.amount - Amount in smallest unit (wei for ETH)
- * @param {bigint} params.safetyDeposit - Safety deposit in ICP e8s
- * @param {Object} params.timelocks - Timelock configuration
- * @param {bigint} params.timelocks.withdrawal - Private withdrawal delay (seconds)
- * @param {bigint} params.timelocks.publicWithdrawal - Public withdrawal delay (seconds)
- * @param {bigint} params.timelocks.cancellation - Cancellation delay (seconds)
- * @param {Object} agent - Initialized IC agent
- * @param {Object} actor - IC actor for the escrow canister
- * @returns {Promise<Object>} Result containing hashlock and secret
- */
 async function createSourceEscrow(params, agent, actor) {
     try {
         // Generate secret and hashlock
@@ -103,13 +82,6 @@ async function createSourceEscrow(params, agent, actor) {
     }
 }
 
-/**
- * Initialize IC connection and create escrow
- * @param {string} canisterId - Your escrow canister ID
- * @param {Object} escrowParams - Escrow parameters (same as createSourceEscrow)
- * @param {string} host - IC host (optional, defaults to local)
- * @returns {Promise<Object>} Escrow creation result
- */
 async function initAndCreateEscrow(canisterId, escrowParams, host = 'http://127.0.0.1:4943') {
     try {
         // Initialize agent
