@@ -4,6 +4,8 @@ import { HttpAgent, Actor, ActorSubclass, ActorMethod } from "@dfinity/agent";
 import { idlFactory } from "../../../icp/src/declarations/icp_backend";
 import { useEffect, useState } from "react";
 import { AuthClientContext } from "../context/authclient";
+import { LedgerCanister } from "@dfinity/ledger-icp";
+import { Principal } from "@dfinity/principal";
 // import { FAI3_backend } from "../../../declarations/FAI3_backend";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
@@ -12,6 +14,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     const [authClient, setAuthClient] = useState<AuthClient | undefined>(undefined);
     const [connected, setConnected] = useState(false);
     const [connecting, setConnecting] = useState(true);
+    const [ledgerCanister, setLedgerCanister] = useState<LedgerCanister | undefined>(undefined);
 
     useEffect(() => {
         (async () => {
@@ -76,9 +79,15 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
         const webapp = Actor.createActor(idlFactory, {
             agent,
-            canisterId: "u6s2n-gx777-77774-qaaba-cai",
+            canisterId: "uzt4z-lp777-77774-qaabq-cai",
+        });
+        
+        const ledgerCanister = LedgerCanister.create({
+            agent,
+            canisterId: Principal.fromText(import.meta.env.VITE_CANISTER_ID_ICP_LEDGER_CANISTER || "ryjl3-tyaaa-aaaaa-aaaba-cai"),
         });
 
+        setLedgerCanister(ledgerCanister);
         setWebApp(webapp);
         setConnected(true);
         setConnecting(false);
@@ -94,7 +103,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     };
 
     return (
-        <AuthClientContext.Provider value={{ authClient, address, connect, disconnect, webapp, connected, connecting }}>
+        <AuthClientContext.Provider value={{ authClient, address, connect, disconnect, webapp, connected, connecting, ledgerCanister }}>
             {children}
         </AuthClientContext.Provider>
     );

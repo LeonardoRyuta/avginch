@@ -8,4 +8,4 @@ deploying II
 
 dfx deploy internet_identity --argument '(null)'
 
-dfx ledger transfer 151982e19fdec075d00ac7ec856ed30edf7393cb8e71a2f04f3ba18467daaaa0 --memo 12345 --icp 3
+dfx ledger transfer 1bf1f6e7030eea8e3f95075c2e941727f5543f02da5c7400722e521618b9daa7 --memo 12345 --icp 3

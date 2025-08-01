@@ -1,6 +1,7 @@
 import { AuthClient } from "@dfinity/auth-client";
 import { ActorSubclass, ActorMethod } from "@dfinity/agent";
 import { createContext } from "react";
+import { LedgerCanister } from "@dfinity/ledger-icp";
 
 const AuthClientContext = createContext<{
     authClient: AuthClient | undefined;
@@ -10,6 +11,7 @@ const AuthClientContext = createContext<{
     webapp: ActorSubclass<Record<string, ActorMethod<unknown[], unknown>>> | undefined;
     connected: boolean;
     connecting: boolean;
+    ledgerCanister: LedgerCanister | undefined;
 }>({
     authClient: undefined,
     address: "",
@@ -18,6 +20,7 @@ const AuthClientContext = createContext<{
     webapp: undefined,
     connected: false,
     connecting: true,
+    ledgerCanister: undefined,
 });
 
 export { AuthClientContext };

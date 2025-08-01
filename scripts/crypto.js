@@ -25,24 +25,42 @@ function secretHashlockFlow() {
 function formatHashlockForCandid(hashlock) {
   // Remove 0x prefix and convert hex to bytes
   const hex = hashlock.slice(2);
-  const bytes = Buffer.from(hex, 'hex');
+  const bytes = Buffer.from(hex, "hex");
   const byteArray = Array.from(bytes);
 
   return "{" + byteArray.join("; ") + "}";
 }
 
+function formatHashlockForAgent(hashlock) {
+  // Remove 0x prefix and convert hex to bytes
+  const hex = hashlock.slice(2);
+  const bytes = Buffer.from(hex, "hex");
+  const byteArray = Array.from(bytes);
+
+  return "[" + byteArray.join(", ") + "]";
+}
+
 function formatSecretForCandid(secret) {
   // Remove 0x prefix and convert hex to bytes
   const hex = secret.slice(2);
-  const bytes = Buffer.from(hex, 'hex');
+  const bytes = Buffer.from(hex, "hex");
   const byteArray = Array.from(bytes);
 
   return "{" + byteArray.join(";") + "}";
 }
 
+function formatSecretForAgent(secret) {
+  // Remove 0x prefix and convert hex to bytes
+  const hex = secret.slice(2);
+  const bytes = Buffer.from(hex, "hex");
+  const byteArray = Array.from(bytes);
+
+  return "[" + byteArray.join(",") + "]";
+}
+
 function printForCommandLine() {
   const { secret, hashlock } = secretHashlockFlow();
-  
+
   console.log("\n📋 CANDID FORMAT FOR CLI:");
   console.log("==========================");
   console.log("Hashlock:", formatHashlockForCandid(hashlock));
@@ -54,20 +72,31 @@ function printWithdrawalFormats(secret, hashlock) {
   console.log("======================");
   console.log("Secret for withdraw_src:", formatSecretForCandid(secret));
   console.log("Hashlock for withdraw_src:", formatHashlockForCandid(hashlock));
-  
+
+  console.log("\n🔐 WITHDRAWAL FORMAT FOR AGENT:");
+  console.log("Secret for withdraw_src:", formatSecretForAgent(secret));
+  console.log("Hashlock for withdraw_src:", formatHashlockForAgent(hashlock));
+
   console.log("\n📝 EXAMPLE WITHDRAW COMMAND:");
   console.log("============================");
-  console.log(`dfx canister call icp_backend withdraw_src '(vec ${formatSecretForCandid(secret)}, vec ${formatHashlockForCandid(hashlock)})'`);
+  console.log(
+    `dfx canister call icp_backend withdraw_src '(vec ${formatSecretForCandid(
+      secret
+    )}, vec ${formatHashlockForCandid(hashlock)})'`
+  );
 }
 
 // For testing both creation and withdrawal
 function printBothFormats() {
   const { secret, hashlock } = secretHashlockFlow();
-  
+
   console.log("\n📋 CREATION FORMAT:");
   console.log("===================");
-  console.log("Hashlock for create_src_escrow:", formatHashlockForCandid(hashlock));
-  
+  console.log(
+    "Hashlock for create_src_escrow:",
+    formatHashlockForCandid(hashlock)
+  );
+
   printWithdrawalFormats(secret, hashlock);
 }
 
@@ -78,10 +107,14 @@ function printWithdrawalOnly(existingSecret) {
   console.log("======================");
   console.log("Secret:", formatSecretForCandid(existingSecret));
   console.log("Hashlock:", formatHashlockForCandid(hashlock));
-  
+
   console.log("\n📝 EXAMPLE WITHDRAW COMMAND:");
   console.log("============================");
-  console.log(`dfx canister call icp_backend withdraw_src '(vec ${formatSecretForCandid(existingSecret)}, vec ${formatHashlockForCandid(hashlock)})'`);
+  console.log(
+    `dfx canister call icp_backend withdraw_src '(vec ${formatSecretForCandid(
+      existingSecret
+    )}, vec ${formatHashlockForCandid(hashlock)})'`
+  );
 }
 
 // Run the main function
@@ -89,7 +122,6 @@ printBothFormats();
 
 // Uncomment to test with existing secret:
 // printWithdrawalOnly("0xe700e4d7e26770788c241b93e7a0250a0d19459d671d6fc0c406841262f852e0");
-
 
 // 🔐 CRYPTOGRAPHIC SETUP:
 // =======================
