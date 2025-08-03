@@ -1,119 +1,83 @@
 # ICP Fusion+ Resolver
 
-An Express.js server that acts as a resolver for  "dstChain": "ethereum",
-  "srcToken": "0x0000000000000000000000000000000000000000",
-  "dstToken": "0xa0b86a33E6417D01c97fEF10E4B19e0aB36f22E8",
-  "srcAmount": "1000000000",
-  "dstAmount": "1000000000000000000",
-  "maker": "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae",usion+ cross-chain atomic swaps. The resolver automatically fills orders by creating source and destination escrows, providing liquidity, and executing withdrawals.
+The resolver service is the coordination layer that enables cross-chain atomic swaps between EVM networks and the Internet Computer Protocol. It handles order management, withdrawal sequencing, and provides the liquidity for atomic swaps.
 
-## Features
+## Quick Start
 
-- **Cross-chain order filling**: Supports ICP ↔ EVM chains (Ethereum, Polygon, Arbitrum)
-- **Automated escrow management**: Creates both source and destination escrows
-- **Liquidity provision**: Provides tokens for both sides of the swap
-- **Automated execution**: Monitors escrows and executes withdrawals when conditions are met
-- **RESTful API**: Easy integration with frontend applications
-- **Comprehensive logging**: Winston-based logging for monitoring and debugging
-- **Safety mechanisms**: Configurable safety deposits and timelock validation
+### Prerequisites
 
-## Installation
+- Node.js 18+
+- npm
+- Deployed ICP canisters (use `../icp/canister_deploy.sh`)
+- Deployed EVM contracts on Base Sepolia (use `../evm/deploy-base-sepolia.sh`)
+
+### Setup
 
 ```bash
-cd resolver
+# Install dependencies
 npm install
-```
 
-## Configuration
-
-1. Copy the environment template:
-```bash
+# Configure environment
 cp .env.example .env
+# Edit .env with deployed contract addresses
+
+# Start development server
+npm run dev
 ```
 
-2. Configure the environment variables:
+## Environment Configuration
+
+Create `.env` file with the following variables:
 
 ```env
 # ICP Configuration
-ICP_CANISTER_ID=your_canister_id
-ICP_HOST=https://ic0.app  # or http://127.0.0.1:4943 for local
-ICP_ENV=mainnet  # or local
+ICP_CANISTER_ID=rdmx6-jaaaa-aaaaa-aaadq-cai  # From ICP deployment
+ICP_HOST=http://127.0.0.1:4943
+ICP_ENV=local
 
-# EVM Configuration
-EVM_RPC_URL=https://eth.llamarpc.com
-EVM_PRIVATE_KEY=your_private_key
-EVM_ESCROW_SRC_ADDRESS=deployed_src_escrow_address
-EVM_ESCROW_DST_ADDRESS=deployed_dst_escrow_address
+# EVM Configuration (Base Sepolia)
+EVM_RPC_URL=https://sepolia.base.org
+EVM_PRIVATE_KEY=your_private_key_without_0x_prefix  # From EVM deployment
+EVM_ICP_ESCROW_FACTORY_ADDRESS=0x...  # From EVM deployment
+EVM_GAS_LIMIT=500000
 
 # Resolver Configuration
 PORT=3000
 RESOLVER_FEE_PERCENT=0.1
 MAX_ORDER_SIZE=1000000000000
-SUPPORTED_TOKENS=0x0000000000000000000000000000000000000000
+SUPPORTED_TOKENS=0x0000000000000000000000000000000000000000,0xa0b86a33E6417D01c97fEF10E4B19e0aB36f22E8
+
+# Logging
+LOG_LEVEL=info
 ```
 
-## Usage
+**Required Configuration Steps:**
 
-### Start the resolver
+1. **Deploy ICP Canisters**: Run `../icp/canister_deploy.sh` and copy the `icp_backend` canister ID
+2. **Deploy EVM Contracts**: Run `../evm/deploy-base-sepolia.sh` and copy the factory contract address
+3. **Update Environment**: Set `ICP_CANISTER_ID` and `EVM_ICP_ESCROW_FACTORY_ADDRESS` from deployment outputs
 
-```bash
-npm start
-```
+## API Endpoints
 
-For development with auto-reload:
-```bash
-npm run dev
-```
-
-### API Endpoints
-
-#### Submit an Order
-```bash
-POST /orders
-```
-
-Example request:
-```json
-{
-  "orderHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-  "srcChain": "icp",
-  "dstChain": "ethereum",
-  "srcToken": "0x0000000000000000000000000000000000000000",
-  "dstToken": "0xa0b86a33E6417D01c97fEF10E4B19e0aB36f22E8",
-  "srcAmount": "1000000000",
-  "dstAmount": "1000000000000000000",
-  "maker": "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae",
-  "taker": "0x742d35Cc6E5A69e6d89B134b1234567890123456",
-  "deadline": 1734567890,
-  "timelocks": {
-    "withdrawal": 3600,
-    "publicWithdrawal": 7200,
-    "cancellation": 86400
-  }
-}
-```
-
-#### Get Order Status
-```bash
-GET /orders/:orderHash
-```
-
-#### Get All Orders
-```bash
-GET /orders?page=1&limit=50&status=active
-```
-
-#### Health Check
+### Health Check
 ```bash
 GET /health
 ```
 
-#### Resolver Info
+### Resolver Info
 ```bash
 GET /info
 ```
 
-## Order Flow
+### Order Management
+```bash
+POST /orders
+GET /orders/:orderId
+```
+
+## Core Functionality
+
+### Order Flow
 
 1. **Order Submission**: Client submits an order via POST /orders
 2. **Validation**: Order is validated for format, limits, and deadlines
@@ -123,6 +87,81 @@ GET /info
 6. **Liquidity Provision**: Resolver provides tokens to the destination escrow
 7. **Monitoring**: Waits for the appropriate timelock period
 8. **Withdrawal Execution**: Executes withdrawals to complete the swap
+
+### Cross-Chain Coordination
+
+The resolver implements intelligent coordination between EVM and ICP networks:
+
+- **Extended Timing Buffers**: 90-second delays for ICP operations
+- **Smart Sequencing**: EVM withdrawals before ICP for optimal success rates
+- **Retry Logic**: Exponential backoff with up to 3.5 minutes of attempts
+- **State Synchronization**: Real-time monitoring of escrow states
+
+### Withdrawal Optimization
+
+Key optimizations discovered through testing:
+
+- **Sequential Execution**: EVM → ICP withdrawal order improves success rates
+- **Buffer Timing**: Additional 30-second buffers for ICP consensus delays
+- **Multiple Retries**: Up to 3 attempts with escalating time delays
+- **Error Recovery**: Comprehensive logging and automatic recovery attempts
+
+## Development
+
+### Local Development
+
+```bash
+# Start local services first
+cd ../icp && ./canister_deploy.sh
+cd ../evm && ./deploy-base-sepolia.sh
+
+# Configure resolver
+cp .env.example .env
+# Update with deployed addresses
+
+# Start resolver
+npm run dev
+```
+
+### Testing Configuration
+
+The system uses fast timeouts for development:
+
+- **Withdrawal window**: 30 seconds
+- **Public withdrawal**: 60 seconds  
+- **Resolver buffers**: 90 seconds + retries
+
+This allows complete end-to-end testing in under 5 minutes.
+
+### Integration Testing
+
+```bash
+# 1. Deploy all components
+cd ../icp && ./canister_deploy.sh
+cd ../evm && ./deploy-base-sepolia.sh
+
+# 2. Configure resolver with deployed addresses
+cp .env.example .env
+# Edit with canister IDs and contract addresses
+
+# 3. Start resolver service
+npm run dev
+
+# 4. Test order submission
+curl -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "srcChain": "ethereum",
+    "dstChain": "icp",
+    "srcToken": "0x0000000000000000000000000000000000000000",
+    "dstToken": "icp",
+    "srcAmount": "1000000000000000000",
+    "dstAmount": "100000000",
+    "maker": "0x...",
+    "taker": "principal...",
+    "deadline": 1700000000
+  }'
+```
 
 ## Security Considerations
 
@@ -141,7 +180,7 @@ GET /info
 - Private keys should be secured and rotated regularly
 - Consider using hardware wallets or key management services for production
 
-## Development
+## Configuration Details
 
 ### Adding New Chains
 
@@ -156,87 +195,120 @@ GET /info
 2. Ensure token contracts are deployed on target chains
 3. Add token-specific validation if needed
 
-### Testing
+### Performance Tuning
 
-```bash
-# Start local development environment
-dfx start --background
-dfx deploy
+Key configuration parameters:
 
-# In another terminal, start local EVM node
-npx hardhat node
+```env
+# Timing Configuration
+TIMING_BUFFER=90000           # Base timing buffer (ms)
+RETRY_ATTEMPTS=3              # Number of retry attempts
+RETRY_DELAY=30000            # Delay between retries (ms)
 
-# Deploy EVM contracts
-npx hardhat run scripts/deploy.js --network localhost
+# Order Limits
+MAX_ORDER_SIZE=1000000000000  # Maximum order size
+MIN_ORDER_SIZE=1000000       # Minimum order size
+RESOLVER_FEE_PERCENT=0.1     # Fee percentage
 
-# Start resolver
-npm run dev
+# Network Configuration
+EVM_GAS_LIMIT=500000         # Gas limit for EVM transactions
+ICP_TRANSFER_FEE=10000       # ICP transfer fee (e8s)
 ```
-
-## Monitoring
-
-The resolver includes comprehensive logging:
-
-- **Access logs**: HTTP request logging via Morgan
-- **Application logs**: Structured logging via Winston
-- **Error tracking**: Automatic error logging and order failure tracking
-- **Health checks**: `/health` endpoint for monitoring systems
-
-Log files:
-- `error.log`: Error-level logs only
-- `combined.log`: All application logs
-
-## Production Deployment
-
-### Environment Setup
-
-1. **Secure private keys**: Use environment variables or key management services
-2. **Configure logging**: Set appropriate log levels and retention policies
-3. **Set up monitoring**: Use health checks and log monitoring
-4. **Configure limits**: Set appropriate order size limits and fee rates
-
-### Scaling Considerations
-
-- **Database**: Replace in-memory storage with persistent database (PostgreSQL, MongoDB)
-- **Load balancing**: Use multiple resolver instances behind a load balancer
-- **Queue system**: Implement job queues for order processing (Redis, RabbitMQ)
-- **State management**: Use distributed caching for order state
-
-### Security Best Practices
-
-- **Rate limiting**: Implement rate limiting on API endpoints
-- **Input validation**: Comprehensive input validation and sanitization
-- **HTTPS**: Use TLS encryption for all communications
-- **Monitoring**: Monitor for suspicious activity and failed transactions
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"Order already exists"**: Check if order hash is unique
-2. **"Order amount exceeds maximum limit"**: Verify order size against MAX_ORDER_SIZE
-3. **"Invalid secret"**: Ensure secret matches the hashlock
-4. **"Insufficient balance"**: Resolver needs funds on both chains
+1. **"Canister not found"**: Verify ICP canister deployment and `ICP_CANISTER_ID`
+2. **"Transaction reverted"**: Check EVM contract addresses and Base Sepolia ETH balance
+3. **"Unauthorized"**: Verify ICP identity setup and private key configuration
+4. **"Timing out"**: Increase buffer times for slower networks
 
 ### Debug Mode
 
-Set log level to debug for verbose output:
+Enable detailed logging:
+
 ```env
 LOG_LEVEL=debug
 ```
 
-### Manual Recovery
+This provides comprehensive logging for:
+- Order processing steps
+- Cross-chain state changes
+- Timing and retry information
+- Error details and stack traces
 
-If an order gets stuck, you can manually execute withdrawals using the ICP CLI or EVM contract interactions.
+### Network Issues
+
+- Verify RPC endpoints are accessible
+- Check firewall settings for local development
+- Ensure proper CORS configuration for frontend access
+- Test with smaller amounts before large orders
+
+## Monitoring
+
+### Health Checks
+
+The resolver provides health endpoints:
+
+```bash
+# Basic health check
+curl http://localhost:3000/health
+
+# Detailed system info
+curl http://localhost:3000/info
+```
+
+### Logging
+
+Comprehensive logging includes:
+
+- Order lifecycle events
+- Cross-chain transaction hashes
+- Timing information
+- Error conditions and recovery attempts
+- Performance metrics
+
+### Metrics
+
+Track key metrics:
+
+- Order success/failure rates
+- Average processing times
+- Cross-chain latency
+- Error frequency by type
+
+## Production Deployment
+
+### Environment Setup
+
+```env
+# Production ICP Configuration
+ICP_CANISTER_ID=<mainnet-canister-id>
+ICP_HOST=https://ic0.app
+ICP_ENV=mainnet
+
+# Production EVM Configuration
+EVM_RPC_URL=https://mainnet.base.org
+EVM_PRIVATE_KEY=<secure-production-key>
+
+# Production Timing (longer for safety)
+TIMING_BUFFER=300000  # 5 minutes
+RETRY_ATTEMPTS=5
+```
+
+### Security Best Practices
+
+- Use secure key management for production private keys
+- Implement proper logging and monitoring
+- Set up alerting for failed transactions
+- Regular security audits and updates
+- Proper backup and disaster recovery procedures
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## License
-
-MIT License
+1. Follow Node.js and Express.js best practices
+2. Add comprehensive tests for new features
+3. Update API documentation
+4. Ensure proper error handling
+5. Test across different network conditions
