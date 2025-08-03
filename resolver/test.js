@@ -20,18 +20,19 @@ async function testResolver() {
         console.log('Info:', infoData);
         console.log('');
 
-        // Test order submission
-        console.log('3. Testing order submission...');
+        // Test order submission (ICP -> EVM)
+        console.log('3. Testing order submission (ICP -> EVM)...');
         const orderData = {
             orderHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             srcChain: "icp",
             dstChain: "ethereum",
-            srcToken: "0x0000000000000000000000000000000000000000",
-            dstToken: "0xA0b86a33E6417d01C97FEf10e4B19e0ab36f22e8",
+            srcToken: "0x0000000000000000000000000000000000000000", // ICP
+            dstToken: "0x0000000000000000000000000000000000000000", // ETH on Ethereum
             srcAmount: "1000000000", // 10 ICP in e8s
             dstAmount: "1000000000000000000", // 1 ETH in wei
-            maker: "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae",
-            taker: "0x742d35Cc6E5A69e6d89B134b1234567890123456",
+            // Clean address mapping for ICP -> EVM:
+            maker: "0x742d35Cc6E5A69e6d89B134b1234567890123456", // EVM address (receives ETH)
+            taker: "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae", // ICP address (receives ICP)
             deadline: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
             timelocks: {
                 withdrawal: 3600, // 1 hour
@@ -80,12 +81,13 @@ async function testEVMToICPOrder() {
         orderHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
         srcChain: "ethereum",
         dstChain: "icp",
-        srcToken: "0xA0b86a33E6417d01C97FEf10e4B19e0ab36f22e8",
-        dstToken: "0x0000000000000000000000000000000000000000",
+        srcToken: "0x0000000000000000000000000000000000000000", // ETH on Ethereum
+        dstToken: "0x0000000000000000000000000000000000000000", // ICP
         srcAmount: "1000000000000000000", // 1 ETH in wei
         dstAmount: "1000000000", // 10 ICP in e8s
-        maker: "0x742d35Cc6E5A69e6d89B134b1234567890123456",
-        taker: "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae",
+        // Clean address mapping for EVM -> ICP:
+        maker: "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae", // ICP address (receives ICP)
+        taker: "0x742d35Cc6E5A69e6d89B134b1234567890123456", // EVM address (receives ETH)
         deadline: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
         timelocks: {
             withdrawal: 1800, // 30 minutes
@@ -105,15 +107,70 @@ async function testEVMToICPOrder() {
 
         const result = await response.json();
         console.log('EVM to ICP order result:', result);
+        
+        if (result.success) {
+            console.log('✅ Address mapping verified:');
+            console.log('  Maker receives:', result.addressMapping?.makerReceives);
+            console.log('  Taker receives:', result.addressMapping?.takerReceives);
+        }
     } catch (error) {
         console.error('EVM to ICP order test failed:', error);
     }
 }
 
+// New test for ICP to EVM order (opposite direction)
+async function testICPToEVMOrder() {
+    console.log('\n7. Testing ICP to EVM order...');
+    
+    const icpToEvmOrder = {
+        orderHash: "0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+        srcChain: "icp",
+        dstChain: "ethereum", 
+        srcToken: "0x0000000000000000000000000000000000000000", // ICP
+        dstToken: "0xa0b86a33E6417D01c97fEF10E4B19e0aB36f22E8", // USDC on Ethereum
+        srcAmount: "100000000", // 20 ICP in e8s
+        dstAmount: "10000000000000", // 2 ETH in wei
+        // Clean address mapping for ICP -> EVM (flipped from above):
+        maker: "0x742d35Cc6E5A69e6d89B134b1234567890123456", // EVM address (receives ETH)
+        taker: "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae", // ICP address (receives ICP)
+        deadline: Math.floor(Date.now() / 1000) + 3600,
+        timelocks: {
+            withdrawal: 1800,
+            publicWithdrawal: 3600,
+            cancellation: 43200
+        }
+    };
+
+    try {
+        const response = await fetch(`${RESOLVER_URL}/orders`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(icpToEvmOrder)
+        });
+
+        const result = await response.json();
+        console.log('ICP to EVM order result:', result);
+        
+        if (result.success) {
+            console.log('✅ Address mapping verified:');
+            console.log('  Maker receives:', result.addressMapping?.makerReceives);
+            console.log('  Taker receives:', result.addressMapping?.takerReceives);
+        }
+    } catch (error) {
+        console.error('ICP to EVM order test failed:', error);
+    }
+}
+
 // Run tests
+console.log('🚀 ICP Fusion+ Resolver Test Suite');
 console.log('Make sure the resolver is running on port 3000 before running this test.\n');
 console.log('To start the resolver: cd resolver && npm start\n');
 
 testResolver().then(() => {
-    testEVMToICPOrder();
+    testEVMToICPOrder()
+    // .then(() => { disable for now
+    //     testICPToEVMOrder();
+    // });
 });

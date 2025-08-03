@@ -1,6 +1,11 @@
 # ICP Fusion+ Resolver
 
-An Express.js server that acts as a resolver for ICP Fusion+ cross-chain atomic swaps. The resolver automatically fills orders by creating source and destination escrows, providing liquidity, and executing withdrawals.
+An Express.js server that acts as a resolver for  "dstChain": "ethereum",
+  "srcToken": "0x0000000000000000000000000000000000000000",
+  "dstToken": "0xa0b86a33E6417D01c97fEF10E4B19e0aB36f22E8",
+  "srcAmount": "1000000000",
+  "dstAmount": "1000000000000000000",
+  "maker": "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae",usion+ cross-chain atomic swaps. The resolver automatically fills orders by creating source and destination escrows, providing liquidity, and executing withdrawals.
 
 ## Features
 
@@ -74,7 +79,7 @@ Example request:
   "srcChain": "icp",
   "dstChain": "ethereum",
   "srcToken": "0x0000000000000000000000000000000000000000",
-  "dstToken": "0xA0b86a33E6417d01C97FEf10e4B19e0ab36f22e8",
+  "dstToken": "0xa0b86a33E6417D01c97fEF10E4B19e0aB36f22E8",
   "srcAmount": "1000000000",
   "dstAmount": "1000000000000000000",
   "maker": "qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae",

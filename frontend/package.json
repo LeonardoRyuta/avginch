@@ -18,6 +18,7 @@
     "@dfinity/utils": "^2.13.2",
     "@tailwindcss/vite": "^4.1.11",
     "dotenv": "^17.2.1",
+    "ethers": "^6.15.0",
     "lucide-react": "^0.534.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

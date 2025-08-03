@@ -16,6 +16,13 @@ export const SUPPORTED_CHAINS: Chain[] = [
     rpcUrl: 'https://ic0.app',
   },
   {
+    id: 'base',
+    name: 'Base',
+    symbol: 'ETH',
+    icon: '🔷',
+    rpcUrl: 'https://sepolia.base.org'
+  },
+  {
     id: 'tron',
     name: 'Tron',
     symbol: 'TRX',
@@ -89,6 +96,32 @@ export const TOKENS_BY_CHAIN: Record<string, Token[]> = {
       decimals: 18,
       icon: '🔷',
       chainId: 'icp',
+    },
+  ],
+  base: [
+    {
+      address: '0x0000000000000000000000000000000000000000',
+      symbol: 'ETH',
+      name: 'Ethereum',
+      decimals: 18,
+      icon: '🔷',
+      chainId: 'ethereum',
+    },
+    {
+      address: '0xA0b86a33E6441d15e5c60f55d9f9e7e00a9Db5Dd',
+      symbol: 'USDC',
+      name: 'USD Coin',
+      decimals: 6,
+      icon: '💵',
+      chainId: 'ethereum',
+    },
+    {
+      address: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+      symbol: 'USDT',
+      name: 'Tether USD',
+      decimals: 6,
+      icon: '💲',
+      chainId: 'ethereum',
     },
   ],
   tron: [

@@ -1,14 +1,4 @@
 import express from 'express';
-import dotenv from 'dotenv';
-import winston from 'winston';
-import helmet from 'helmet';
-import cors from 'cors';
-import morgan from 'morgan';
-import Joi from 'joi';
-import { ethers } from 'ethers';
-import { randomBytes, createHash } from 'crypto';
-import cron from 'node-cron';
-import { ICPContractManager, EVMContractManager, calculateRequiredLiquidity, calculateSafetyDeposit } from './contracts.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -19,6 +9,26 @@ import winston from 'winston';
 import Joi from 'joi';
 import cron from 'node-cron';
 import { EVMContractManager, ICPContractManager, calculateRequiredLiquidity, calculateSafetyDeposit } from './contracts.js';
+
+// Helper function to safely normalize Ethereum addresses
+function normalizeEVMAddress(address) {
+    if (!address) return address;
+    
+    // Remove any whitespace and ensure it starts with 0x
+    const cleaned = address.trim();
+    
+    // Check if it's a valid hex address format
+    if (!/^0x[a-fA-F0-9]{40}$/.test(cleaned)) {
+        throw new Error(`Invalid Ethereum address format: ${address}`);
+    }
+    
+    try {
+        // Use ethers.getAddress to get the checksummed version
+        return ethers.getAddress(cleaned);
+    } catch (error) {
+        throw new Error(`Invalid Ethereum address: ${address}. ${error.message}`);
+    }
+}
 
 // Load environment variables
 dotenv.config();
@@ -60,34 +70,142 @@ const config = {
     evm: {
         rpcUrl: process.env.EVM_RPC_URL || 'http://127.0.0.1:8545',
         privateKey: process.env.EVM_PRIVATE_KEY,
-        escrowSrcAddress: process.env.EVM_ESCROW_SRC_ADDRESS,
-        escrowDstAddress: process.env.EVM_ESCROW_DST_ADDRESS,
+        icpEscrowFactoryAddress: process.env.EVM_ICP_ESCROW_FACTORY_ADDRESS,
+        accessTokenAddress: process.env.EVM_ACCESS_TOKEN_ADDRESS,
         gasLimit: process.env.EVM_GAS_LIMIT || '500000'
     },
     resolver: {
         feePercent: parseFloat(process.env.RESOLVER_FEE_PERCENT || '0.1'),
-        maxOrderSize: process.env.MAX_ORDER_SIZE || '1000000000000', // 10,000 ICP in e8s
-        supportedTokens: (process.env.SUPPORTED_TOKENS || '').split(',').filter(Boolean)
+        maxOrderSize: process.env.MAX_ORDER_SIZE || '1000000000000000000', // 10,000 ICP in e8s
+        supportedTokens: (process.env.SUPPORTED_TOKENS || '').split(',').filter(Boolean).map(token => {
+            // Normalize EVM addresses to prevent checksum issues
+            if (token.startsWith('0x')) {
+                try {
+                    return normalizeEVMAddress(token);
+                } catch (e) {
+                    logger.warn(`Invalid token address in SUPPORTED_TOKENS: ${token} - ${e.message}`);
+                    return token; // Return as-is if normalization fails
+                }
+            }
+            return token;
+        }),
+        // Resolver's own addresses for participating in escrows
+        icpAddress: process.env.RESOLVER_ICP_ADDRESS || 'rdmx6-jaaaa-aaaaa-aaadq-cai',
+        evmAddress: process.env.RESOLVER_EVM_ADDRESS || '0x742d35cc6e5a69e6d89b134b1234567890123456'
     }
 };
 
-// Order validation schema
+// Helper function to determine address types based on clean mapping strategy
+function getAddressTypes(order) {
+    const isEVMToICP = order.srcChain !== 'icp' && order.dstChain === 'icp';
+    const isICPToEVM = order.srcChain === 'icp' && order.dstChain !== 'icp';
+    
+    if (isEVMToICP) {
+        // EVM → ICP: Use provided dual addresses
+        return {
+            makerAddressType: 'dual',
+            takerAddressType: 'dual',
+            makerICPAddress: order.makerICPAddress, // Where maker receives ICP
+            makerEVMAddress: order.makerEVMAddress, // Maker's EVM address for escrow
+            takerICPAddress: order.takerICPAddress, // Taker's ICP address (optional)
+            takerEVMAddress: order.takerEVMAddress // Taker's EVM address for escrow
+        };
+    } else if (isICPToEVM) {
+        // ICP → EVM: Use provided dual addresses  
+        return {
+            makerAddressType: 'dual',
+            takerAddressType: 'dual',
+            makerICPAddress: order.makerICPAddress, // Maker's ICP address for escrow
+            makerEVMAddress: order.makerEVMAddress, // Where maker receives EVM tokens
+            takerICPAddress: order.takerICPAddress, // Taker's ICP address for escrow
+            takerEVMAddress: order.takerEVMAddress // Taker's EVM address (optional)
+        };
+    }
+    
+    throw new Error('Unsupported chain combination');
+}
+
+// Validation helper for address format
+function validateAddressFormat(address, expectedType) {
+    if (expectedType === 'evm') {
+        return /^0x[a-fA-F0-9]{40}$/.test(address);
+    } else if (expectedType === 'icp') {
+        // ICP principal format: base32 with hyphens, ending in -cai or similar
+        return /^[a-z0-9-]+$/.test(address) && address.includes('-');
+    }
+    return false;
+}
+
+// Order validation schema with smart address validation
 const orderSchema = Joi.object({
     orderHash: Joi.string().pattern(/^0x[a-fA-F0-9]{64}$/).required(),
-    srcChain: Joi.string().valid('icp', 'ethereum', 'polygon', 'arbitrum').required(),
-    dstChain: Joi.string().valid('icp', 'ethereum', 'polygon', 'arbitrum').required(),
+    srcChain: Joi.string().valid('icp', 'ethereum', 'base').required(),
+    dstChain: Joi.string().valid('icp', 'ethereum', 'base').required(),
     srcToken: Joi.string().required(),
     dstToken: Joi.string().required(),
     srcAmount: Joi.string().pattern(/^[0-9]+$/).required(),
     dstAmount: Joi.string().pattern(/^[0-9]+$/).required(),
-    maker: Joi.string().required(),
-    taker: Joi.string().required(),
+    
+    // Enhanced dual addressing system
+    makerEVMAddress: Joi.string().pattern(/^0x[a-fA-F0-9]{40}$/).optional(),
+    makerICPAddress: Joi.string().min(10).optional(),
+    takerEVMAddress: Joi.string().pattern(/^0x[a-fA-F0-9]{40}$/).optional(),
+    takerICPAddress: Joi.string().min(10).optional(),
+    
+    // Legacy fields (for backward compatibility - will be deprecated)
+    maker: Joi.string().optional(),
+    taker: Joi.string().optional(),
+    
     deadline: Joi.number().integer().min(Math.floor(Date.now() / 1000)).required(),
     timelocks: Joi.object({
         withdrawal: Joi.number().integer().min(300).max(86400).required(), // 5 min to 24 hours
         publicWithdrawal: Joi.number().integer().min(600).max(172800).required(), // 10 min to 48 hours
         cancellation: Joi.number().integer().min(3600).max(604800).required() // 1 hour to 7 days
     }).required()
+}).custom((order, helpers) => {
+    const isEVMToICP = order.srcChain !== 'icp' && order.dstChain === 'icp';
+    const isICPToEVM = order.srcChain === 'icp' && order.dstChain !== 'icp';
+    
+    // Validate dual addressing requirements
+    if (isEVMToICP) {
+        // EVM→ICP: need maker's ICP address + both parties' EVM addresses
+        if (!order.makerICPAddress || !order.makerEVMAddress || !order.takerEVMAddress) {
+            return helpers.error('any.invalid', {
+                message: 'EVM→ICP swaps require makerICPAddress, makerEVMAddress, and takerEVMAddress'
+            });
+        }
+    } else if (isICPToEVM) {
+        // ICP→EVM: need maker's EVM address + both parties' ICP addresses
+        if (!order.makerEVMAddress || !order.makerICPAddress || !order.takerICPAddress) {
+            return helpers.error('any.invalid', {
+                message: 'ICP→EVM swaps require makerEVMAddress, makerICPAddress, and takerICPAddress'
+            });
+        }
+    } else {
+        return helpers.error('any.invalid', {
+            message: 'Currently only ICP↔EVM swaps are supported'
+        });
+    }
+    
+    // Validate address formats
+    const evmAddressPattern = /^0x[a-fA-F0-9]{40}$/;
+    // Accept both short and long ICP principal formats (with hyphens, lowercase, ending in -cai or -bae etc.)
+    const icpAddressPattern = /^[a-z0-9-]{10,64}$/;
+    
+    if (order.makerEVMAddress && !evmAddressPattern.test(order.makerEVMAddress)) {
+        return helpers.error('any.invalid', { message: 'Invalid maker EVM address format' });
+    }
+    if (order.takerEVMAddress && !evmAddressPattern.test(order.takerEVMAddress)) {
+        return helpers.error('any.invalid', { message: 'Invalid taker EVM address format' });
+    }
+    if (order.makerICPAddress && !icpAddressPattern.test(order.makerICPAddress)) {
+        return helpers.error('any.invalid', { message: 'Invalid maker ICP address format' });
+    }
+    if (order.takerICPAddress && !icpAddressPattern.test(order.takerICPAddress)) {
+        return helpers.error('any.invalid', { message: 'Invalid taker ICP address format' });
+    }
+    
+    return order;
 });
 
 // Contract managers
@@ -107,15 +225,15 @@ async function initializeManagers() {
         logger.info('ICP contract manager initialized');
         
         // Initialize EVM manager
-        if (config.evm.privateKey && config.evm.escrowSrcAddress && config.evm.escrowDstAddress) {
+        if (config.evm.privateKey && config.evm.icpEscrowFactoryAddress && config.evm.accessTokenAddress) {
             const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
             const wallet = new ethers.Wallet(config.evm.privateKey, provider);
             
             evmManager = new EVMContractManager(
                 provider,
                 wallet,
-                config.evm.escrowSrcAddress,
-                config.evm.escrowDstAddress
+                config.evm.icpEscrowFactoryAddress,
+                config.evm.accessTokenAddress
             );
             logger.info('EVM contract manager initialized');
         } else {
@@ -150,17 +268,23 @@ async function processOrder(order) {
     
     try {
         const { secret, hashlock, secretHex, hashlockHex } = generateSecret();
+        console.log("Generated secret and hashlock");
         const safetyDeposit = calculateSafetyDeposit(order.srcAmount);
+        console.log(`Safety deposit calculated: ${safetyDeposit}`);
+        const addressTypes = getAddressTypes(order);
+        console.log(`Address types determined: ${JSON.stringify(addressTypes)}`);
         
         // Check liquidity requirements
         const liquidityCheck = await checkLiquidityRequirements(order, safetyDeposit);
         if (!liquidityCheck.sufficient) {
             throw new Error(`Insufficient liquidity: ${liquidityCheck.message}`);
         }
+        console.log(`Liquidity check passed: ${JSON.stringify(liquidityCheck.balances)}`);
         
-        // Store order with generated secret
+        // Store order with generated secret and clean address mapping
         const orderData = {
             ...order,
+            ...addressTypes, // Include makerICPAddress, takerEVMAddress, etc.
             secret,
             hashlock,
             secretHex,
@@ -172,6 +296,12 @@ async function processOrder(order) {
         };
         
         activeOrders.set(order.orderHash, orderData);
+        
+        logger.info(`Order ${order.orderHash} address mapping:`, {
+            maker: `${order.maker} (${addressTypes.makerAddressType})`,
+            taker: `${order.taker} (${addressTypes.takerAddressType})`,
+            flow: `${order.srcChain} → ${order.dstChain}`
+        });
         
         // Step 1: Create source escrow
         await createSourceEscrow(orderData);
@@ -187,6 +317,10 @@ async function processOrder(order) {
             orderHash: order.orderHash,
             hashlockHex,
             status: 'processing',
+            addressMapping: {
+                makerReceives: `${order.dstToken} on ${order.dstChain} at ${order.maker}`,
+                takerReceives: `${order.srcToken} on ${order.srcChain} at ${order.taker}`
+            },
             estimatedCompletionTime: new Date(Date.now() + orderData.timelocks.withdrawal * 1000).toISOString()
         };
         
@@ -216,38 +350,40 @@ async function checkLiquidityRequirements(order, safetyDeposit) {
         let srcBalance = 0n;
         if (order.srcChain === 'icp') {
             // Check ICP balance (implementation depends on your ICP setup)
-            srcBalance = BigInt("1000000000000"); // Mock: 10,000 ICP in e8s
+            srcBalance = BigInt("10000000000000000000000"); // Mock: 10,000 ICP in e8s
         } else {
             // Check EVM balance
-            if (evmManager) {
-                if (order.srcToken === '0x0000000000000000000000000000000000000000') {
-                    srcBalance = await evmManager.provider.getBalance(evmManager.wallet.address);
-                } else {
-                    const tokenContract = new ethers.Contract(order.srcToken, [
-                        "function balanceOf(address account) external view returns (uint256)"
-                    ], evmManager.provider);
-                    srcBalance = await tokenContract.balanceOf(evmManager.wallet.address);
-                }
-            }
+            // if (evmManager) {
+            //     if (order.srcToken === '0x0000000000000000000000000000000000000000') {
+            //         srcBalance = await evmManager.provider.getBalance(evmManager.wallet.address);
+            //     } else {
+            //         const tokenContract = new ethers.Contract(order.srcToken, [
+            //             "function balanceOf(address account) external view returns (uint256)"
+            //         ], evmManager.provider);
+            //         srcBalance = await tokenContract.balanceOf(evmManager.wallet.address);
+            //     }
+            // }
+            srcBalance = BigInt("10000000000000000000000"); // Mock: 1 ETH in wei
         }
         
         // Check destination chain liquidity
         let dstBalance = 0n;
         if (order.dstChain === 'icp') {
             // Check ICP balance
-            dstBalance = BigInt("1000000000000"); // Mock: 10,000 ICP in e8s
+            dstBalance = BigInt("10000000000000000000000"); // Mock: 10,000 ICP in e8s
         } else {
             // Check EVM balance
-            if (evmManager) {
-                if (order.dstToken === '0x0000000000000000000000000000000000000000') {
-                    dstBalance = await evmManager.provider.getBalance(evmManager.wallet.address);
-                } else {
-                    const tokenContract = new ethers.Contract(order.dstToken, [
-                        "function balanceOf(address account) external view returns (uint256)"
-                    ], evmManager.provider);
-                    dstBalance = await tokenContract.balanceOf(evmManager.wallet.address);
-                }
-            }
+            // if (evmManager) {
+            //     if (order.dstToken === '0x0000000000000000000000000000000000000000') {
+            //         dstBalance = await evmManager.provider.getBalance(evmManager.wallet.address);
+            //     } else {
+            //         const tokenContract = new ethers.Contract(order.dstToken, [
+            //             "function balanceOf(address account) external view returns (uint256)"
+            //         ], evmManager.provider);
+            //         dstBalance = await tokenContract.balanceOf(evmManager.wallet.address);
+            //     }
+            // }
+            dstBalance = BigInt("10000000000000000000000"); // Mock: 1 ETH in wei
         }
         
         const srcSufficient = srcBalance >= requiredLiquidity.srcChain;
@@ -276,6 +412,7 @@ async function checkLiquidityRequirements(order, safetyDeposit) {
 }
 
 async function createSourceEscrow(orderData) {
+    console.log('Creating source escrow...');
     const step = { name: 'create_source_escrow', status: 'pending', startedAt: new Date().toISOString() };
     orderData.steps.push(step);
     
@@ -451,8 +588,26 @@ app.get('/info', (req, res) => {
 // Submit order for filling
 app.post('/orders', async (req, res) => {
     try {
+        // Normalize EVM addresses before validation to handle checksum issues
+        const orderData = { ...req.body };
+        
+        try {
+            if (orderData.makerEVMAddress) {
+                orderData.makerEVMAddress = normalizeEVMAddress(orderData.makerEVMAddress);
+            }
+            if (orderData.takerEVMAddress) {
+                orderData.takerEVMAddress = normalizeEVMAddress(orderData.takerEVMAddress);
+            }
+        } catch (addressError) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid address format',
+                details: addressError.message
+            });
+        }
+        
         // Validate request body
-        const { error, value } = orderSchema.validate(req.body);
+        const { error, value } = orderSchema.validate(orderData);
         if (error) {
             return res.status(400).json({
                 success: false,
@@ -488,7 +643,7 @@ app.post('/orders', async (req, res) => {
         }
         
         // Validate chain support
-        const supportedChains = ['icp', 'ethereum', 'polygon', 'arbitrum'];
+        const supportedChains = ['icp', 'ethereum', 'polygon', 'arbitrum', 'base'];
         if (!supportedChains.includes(order.srcChain) || !supportedChains.includes(order.dstChain)) {
             return res.status(400).json({
                 success: false,

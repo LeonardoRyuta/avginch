@@ -1,143 +1,296 @@
 import { ethers } from 'ethers';
 import { Actor, HttpAgent } from '@dfinity/agent';
 
-// EVM Contract ABIs (simplified - you'll need the full ABIs)
-const escrowSrcABI = [
-    "function depositERC20(bytes32 hashlock, uint256 amount, address token, address taker, string memory icpAddress, uint32[4] memory timelocks) external",
-    "function depositETH(bytes32 hashlock, address taker, string memory icpAddress, uint32[4] memory timelocks) external payable",
-    "function withdraw(bytes32 secret, tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, uint32[4] timelocks) immutables) external",
-    "function cancel(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, uint32[4] timelocks) immutables) external"
+// Helper function to safely normalize and validate Ethereum addresses
+function safeGetAddress(address) {
+    // Remove any whitespace and ensure it starts with 0x
+    const cleaned = address.trim();
+    
+    // Check if it's a valid hex address format
+    if (!/^0x[a-fA-F0-9]{40}$/.test(cleaned)) {
+        throw new Error(`Invalid Ethereum address format: ${address}`);
+    }
+    
+    try {
+        // Use ethers.getAddress to get the checksummed version
+        return ethers.getAddress(cleaned);
+    } catch (error) {
+        throw new Error(`Invalid Ethereum address: ${address}. ${error.message}`);
+    }
+}
+
+// Create a simple logger for this module
+const logger = {
+    info: (message) => console.log(`[INFO] ${message}`),
+    warn: (message) => console.warn(`[WARN] ${message}`),
+    error: (message) => console.error(`[ERROR] ${message}`)
+};
+
+// ICP Escrow Factory ABI - based on ICPEscrowFactory.sol
+const icpEscrowFactoryABI = [
+    "function createSrcEscrow(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint32 withdrawal, uint32 publicWithdrawal, uint32 cancellation, uint32 deployedAt) timelocks) immutables) external payable",
+    "function createDstEscrow(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint32 withdrawal, uint32 publicWithdrawal, uint32 cancellation, uint32 deployedAt) timelocks) immutables) external payable",
+    "function addressOfEscrowSrc(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint32 withdrawal, uint32 publicWithdrawal, uint32 cancellation, uint32 deployedAt) timelocks) immutables) external view returns (address)",
+    "function addressOfEscrowDst(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint32 withdrawal, uint32 publicWithdrawal, uint32 cancellation, uint32 deployedAt) timelocks) immutables) external view returns (address)",
+    "function creationFee() external view returns (uint256)",
+    "function ICP_ESCROW_SRC_IMPLEMENTATION() external view returns (address)",
+    "function ICP_ESCROW_DST_IMPLEMENTATION() external view returns (address)",
+    "event SrcEscrowCreated(address escrow, bytes32 hashlock, address maker, address indexed creator)",
+    "event DstEscrowCreated(address escrow, bytes32 hashlock, address taker, address indexed creator)"
 ];
 
-const escrowDstABI = [
-    "function depositERC20(bytes32 hashlock, uint256 amount, address token, address maker, uint32[4] memory timelocks) external",
-    "function depositETH(bytes32 hashlock, address maker, uint32[4] memory timelocks) external payable",
-    "function withdraw(bytes32 secret, tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, uint32[4] timelocks) immutables) external",
-    "function cancel(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, uint32[4] timelocks) immutables) external"
+// Individual Escrow ABI for withdraw/cancel operations
+const icpEscrowABI = [
+    "function withdraw(bytes32 secret, tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint32 withdrawal, uint32 publicWithdrawal, uint32 cancellation, uint32 deployedAt) timelocks) immutables) external",
+    "function cancel(tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint32 withdrawal, uint32 publicWithdrawal, uint32 cancellation, uint32 deployedAt) timelocks) immutables) external",
+    "function getImmutables() external view returns (tuple(bytes32 orderHash, bytes32 hashlock, address maker, address taker, address token, uint256 amount, uint256 safetyDeposit, tuple(uint32 withdrawal, uint32 publicWithdrawal, uint32 cancellation, uint32 deployedAt) timelocks))"
 ];
 
 const erc20ABI = [
     "function approve(address spender, uint256 amount) external returns (bool)",
     "function transfer(address to, uint256 amount) external returns (bool)",
     "function balanceOf(address account) external view returns (uint256)",
-    "function allowance(address owner, address spender) external view returns (uint256)"
+    "function allowance(address owner, address spender) external view returns (uint256)",
+    "function mint(address to, uint256 amount) external"
 ];
 
 export class EVMContractManager {
-    constructor(provider, wallet, escrowSrcAddress, escrowDstAddress) {
+    constructor(provider, wallet, icpEscrowFactoryAddress, accessTokenAddress) {
         this.provider = provider;
         this.wallet = wallet;
-        this.escrowSrcAddress = escrowSrcAddress;
-        this.escrowDstAddress = escrowDstAddress;
+        this.icpEscrowFactoryAddress = icpEscrowFactoryAddress;
+        this.accessTokenAddress = accessTokenAddress;
         
-        this.escrowSrcContract = new ethers.Contract(escrowSrcAddress, escrowSrcABI, wallet);
-        this.escrowDstContract = new ethers.Contract(escrowDstAddress, escrowDstABI, wallet);
+        this.icpEscrowFactory = new ethers.Contract(icpEscrowFactoryAddress, icpEscrowFactoryABI, wallet);
+        
+        // Add access token contract if provided
+        if (accessTokenAddress && accessTokenAddress !== '0x0000000000000000000000000000000000000000') {
+            this.accessTokenContract = new ethers.Contract(accessTokenAddress, erc20ABI, wallet);
+        }
+    }
+    
+    async ensureAccessToken() {
+        if (!this.accessTokenContract) return;
+        
+        try {
+            const balance = await this.accessTokenContract.balanceOf(this.wallet.address);
+            if (balance === 0n) {
+                // Try to mint 1 access token if we don't have any
+                const tx = await this.accessTokenContract.mint(this.wallet.address, ethers.parseEther("1"));
+                await tx.wait();
+                logger.info("Minted access token for resolver");
+            }
+        } catch (error) {
+            logger.warn("Could not ensure access token:", error.message);
+        }
     }
     
     async createEVMSourceEscrow(orderData) {
-        const { orderHash, hashlock, maker, taker, srcToken, srcAmount, timelocks } = orderData;
+        // Ensure we have access tokens
+        await this.ensureAccessToken();
         
-        const timelocksArray = [
-            timelocks.withdrawal,
-            timelocks.publicWithdrawal,
-            timelocks.cancellation,
-            0 // deployed_at will be set by contract
-        ];
+        const { orderHash, hashlockHex, srcToken, srcAmount, safetyDeposit, timelocks } = orderData;
         
+        // For EVM source escrow, use the address mapping
+        // In EVM->ICP: maker is ICP address, taker is EVM address
+        // But for the EVM contract, we need the EVM addresses for authentication
+        const maker = orderData.takerEVMAddress || orderData.taker; // EVM address that can authenticate
+        const taker = orderData.makerICPAddress || orderData.maker; // Will be stored as ICP address string
+        
+        // Prepare immutables struct
+        const immutables = {
+            orderHash: orderHash,
+            hashlock: `0x${hashlockHex}`,
+            maker: maker, // EVM address for authentication
+            taker: taker, // This will be stored but ICP address goes in a separate field
+            token: srcToken,
+            amount: srcAmount,
+            safetyDeposit: safetyDeposit,
+            timelocks: {
+                withdrawal: timelocks.withdrawal,
+                publicWithdrawal: timelocks.publicWithdrawal,
+                cancellation: timelocks.cancellation,
+                deployedAt: 0 // Will be set by the factory
+            }
+        };
+        
+        // Get creation fee from factory
+        const creationFee = await this.icpEscrowFactory.creationFee();
+        
+        let totalEthRequired = BigInt(safetyDeposit) + BigInt(creationFee);
         let tx;
         
         if (srcToken === '0x0000000000000000000000000000000000000000') {
-            // ETH deposit
-            tx = await this.escrowSrcContract.depositETH(
-                hashlock,
-                taker,
-                '', // ICP address - will be set later
-                timelocksArray,
-                { value: srcAmount }
-            );
+            // ETH escrow - include the ETH amount in the transaction value
+            totalEthRequired += BigInt(srcAmount);
+            
+            tx = await this.icpEscrowFactory.createSrcEscrow(immutables, {
+                value: totalEthRequired,
+                gasLimit: 500000
+            });
         } else {
-            // ERC20 deposit
-            const tokenContract = new ethers.Contract(srcToken, erc20ABI, this.wallet);
+            // ERC20 escrow - approve and transfer tokens
+            const checksummedToken = safeGetAddress(srcToken);
+            const tokenContract = new ethers.Contract(checksummedToken, erc20ABI, this.wallet);
             
             // Check allowance and approve if needed
-            const allowance = await tokenContract.allowance(this.wallet.address, this.escrowSrcAddress);
-            if (allowance < srcAmount) {
-                const approveTx = await tokenContract.approve(this.escrowSrcAddress, srcAmount);
+            const allowance = await tokenContract.allowance(this.wallet.address, this.icpEscrowFactoryAddress);
+            if (allowance < BigInt(srcAmount)) {
+                const approveTx = await tokenContract.approve(this.icpEscrowFactoryAddress, srcAmount);
                 await approveTx.wait();
             }
             
-            tx = await this.escrowSrcContract.depositERC20(
-                hashlock,
-                srcAmount,
-                srcToken,
-                taker,
-                '', // ICP address - will be set later
-                timelocksArray
-            );
+            tx = await this.icpEscrowFactory.createSrcEscrow(immutables, {
+                value: totalEthRequired, // ETH for safety deposit + creation fee
+                gasLimit: 500000
+            });
         }
         
         const receipt = await tx.wait();
-        return { transactionHash: receipt.hash, blockNumber: receipt.blockNumber };
+        
+        // Get the escrow address from the event
+        const event = receipt.logs.find(log => {
+            try {
+                const parsed = this.icpEscrowFactory.interface.parseLog(log);
+                return parsed.name === 'SrcEscrowCreated';
+            } catch {
+                return false;
+            }
+        });
+        
+        let escrowAddress = null;
+        if (event) {
+            const parsed = this.icpEscrowFactory.interface.parseLog(event);
+            escrowAddress = parsed.args.escrow;
+        }
+        
+        return { 
+            transactionHash: receipt.hash, 
+            blockNumber: receipt.blockNumber,
+            escrowAddress 
+        };
     }
     
     async createEVMDestinationEscrow(orderData) {
-        const { orderHash, hashlock, maker, taker, dstToken, dstAmount, timelocks } = orderData;
+        // Ensure we have access tokens
+        await this.ensureAccessToken();
         
-        const timelocksArray = [
-            timelocks.withdrawal,
-            timelocks.publicWithdrawal,
-            timelocks.cancellation,
-            0 // deployed_at will be set by contract
-        ];
+        const { orderHash, hashlock, maker, taker, dstToken, dstAmount, safetyDeposit, timelocks } = orderData;
         
+        // Prepare immutables struct
+        const immutables = {
+            orderHash: orderHash,
+            hashlock: `0x${orderData.hashlockHex}`,
+            maker: maker,
+            taker: taker,
+            token: dstToken,
+            amount: dstAmount,
+            safetyDeposit: safetyDeposit,
+            timelocks: {
+                withdrawal: timelocks.withdrawal,
+                publicWithdrawal: timelocks.publicWithdrawal,
+                cancellation: timelocks.cancellation,
+                deployedAt: 0 // Will be set by the factory
+            }
+        };
+        
+        // Get creation fee from factory
+        const creationFee = await this.icpEscrowFactory.creationFee();
+        
+        let totalEthRequired = BigInt(safetyDeposit) + BigInt(creationFee);
         let tx;
         
         if (dstToken === '0x0000000000000000000000000000000000000000') {
-            // ETH deposit
-            tx = await this.escrowDstContract.depositETH(
-                hashlock,
-                maker,
-                timelocksArray,
-                { value: dstAmount }
-            );
+            // ETH escrow - include the ETH amount in the transaction value
+            totalEthRequired += BigInt(dstAmount);
+            
+            tx = await this.icpEscrowFactory.createDstEscrow(immutables, {
+                value: totalEthRequired,
+                gasLimit: 500000
+            });
         } else {
-            // ERC20 deposit
+            // ERC20 escrow - approve and transfer tokens
             const tokenContract = new ethers.Contract(dstToken, erc20ABI, this.wallet);
             
             // Check allowance and approve if needed
-            const allowance = await tokenContract.allowance(this.wallet.address, this.escrowDstAddress);
-            if (allowance < dstAmount) {
-                const approveTx = await tokenContract.approve(this.escrowDstAddress, dstAmount);
+            const allowance = await tokenContract.allowance(this.wallet.address, this.icpEscrowFactoryAddress);
+            if (allowance < BigInt(dstAmount)) {
+                const approveTx = await tokenContract.approve(this.icpEscrowFactoryAddress, dstAmount);
                 await approveTx.wait();
             }
             
-            tx = await this.escrowDstContract.depositERC20(
-                hashlock,
-                dstAmount,
-                dstToken,
-                maker,
-                timelocksArray
-            );
+            tx = await this.icpEscrowFactory.createDstEscrow(immutables, {
+                value: totalEthRequired, // ETH for safety deposit + creation fee
+                gasLimit: 500000
+            });
         }
         
         const receipt = await tx.wait();
-        return { transactionHash: receipt.hash, blockNumber: receipt.blockNumber };
+        
+        // Get the escrow address from the event
+        const event = receipt.logs.find(log => {
+            try {
+                const parsed = this.icpEscrowFactory.interface.parseLog(log);
+                return parsed.name === 'DstEscrowCreated';
+            } catch {
+                return false;
+            }
+        });
+        
+        let escrowAddress = null;
+        if (event) {
+            const parsed = this.icpEscrowFactory.interface.parseLog(event);
+            escrowAddress = parsed.args.escrow;
+        }
+        
+        return { 
+            transactionHash: receipt.hash, 
+            blockNumber: receipt.blockNumber,
+            escrowAddress 
+        };
     }
     
     async withdrawFromEVMSource(orderData) {
+        // Get the escrow address first
         const immutables = this.formatImmutables(orderData);
+        const escrowAddress = await this.icpEscrowFactory.addressOfEscrowSrc(immutables);
+        
+        // Create escrow contract instance
+        const escrowContract = new ethers.Contract(escrowAddress, icpEscrowABI, this.wallet);
+        
         const secret = `0x${orderData.secretHex}`;
         
-        const tx = await this.escrowSrcContract.withdraw(secret, immutables);
+        const tx = await escrowContract.withdraw(secret, immutables);
         const receipt = await tx.wait();
         return { transactionHash: receipt.hash, blockNumber: receipt.blockNumber };
     }
     
     async withdrawFromEVMDestination(orderData) {
+        // Get the escrow address first
         const immutables = this.formatImmutables(orderData);
+        const escrowAddress = await this.icpEscrowFactory.addressOfEscrowDst(immutables);
+        
+        // Create escrow contract instance
+        const escrowContract = new ethers.Contract(escrowAddress, icpEscrowABI, this.wallet);
+        
         const secret = `0x${orderData.secretHex}`;
         
-        const tx = await this.escrowDstContract.withdraw(secret, immutables);
+        const tx = await escrowContract.withdraw(secret, immutables);
+        const receipt = await tx.wait();
+        return { transactionHash: receipt.hash, blockNumber: receipt.blockNumber };
+    }
+    
+    async cancelEVMEscrow(orderData, isSource = true) {
+        // Get the escrow address first
+        const immutables = this.formatImmutables(orderData);
+        const escrowAddress = isSource 
+            ? await this.icpEscrowFactory.addressOfEscrowSrc(immutables)
+            : await this.icpEscrowFactory.addressOfEscrowDst(immutables);
+        
+        // Create escrow contract instance
+        const escrowContract = new ethers.Contract(escrowAddress, icpEscrowABI, this.wallet);
+        
+        const tx = await escrowContract.cancel(immutables);
         const receipt = await tx.wait();
         return { transactionHash: receipt.hash, blockNumber: receipt.blockNumber };
     }
@@ -148,15 +301,15 @@ export class EVMContractManager {
             hashlock: `0x${orderData.hashlockHex}`,
             maker: orderData.maker,
             taker: orderData.taker,
-            token: orderData.srcToken,
-            amount: orderData.srcAmount,
+            token: orderData.srcToken || orderData.dstToken, // Use appropriate token
+            amount: orderData.srcAmount || orderData.dstAmount, // Use appropriate amount
             safetyDeposit: orderData.safetyDeposit,
-            timelocks: [
-                orderData.timelocks.withdrawal,
-                orderData.timelocks.publicWithdrawal,
-                orderData.timelocks.cancellation,
-                0 // deployed_at
-            ]
+            timelocks: {
+                withdrawal: orderData.timelocks.withdrawal,
+                publicWithdrawal: orderData.timelocks.publicWithdrawal,
+                cancellation: orderData.timelocks.cancellation,
+                deployedAt: 0 // This should be the actual deployment timestamp
+            }
         };
     }
 }
@@ -316,5 +469,8 @@ export function calculateRequiredLiquidity(orderData) {
 
 export function calculateSafetyDeposit(amount) {
     // Safety deposit is 15% of the amount
-    return Math.floor(BigInt(amount) * BigInt(15) / BigInt(100)).toString();
+    // Convert to BigInt for calculation, then back to string
+    const amountBigInt = BigInt(amount);
+    const safetyDepositBigInt = (amountBigInt * BigInt(15)) / BigInt(100);
+    return safetyDepositBigInt.toString();
 }
