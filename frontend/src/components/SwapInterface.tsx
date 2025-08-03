@@ -39,7 +39,7 @@ export default function SwapInterface() {
         icon: '∞',
         chainId: 'icp',
     });
-    const [fromAmount, setFromAmount] = useState('0.1');
+    const [fromAmount, setFromAmount] = useState('0.01');
     const [toAmount, setToAmount] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [quote, setQuote] = useState<SwapQuote | null>(null);
@@ -48,7 +48,7 @@ export default function SwapInterface() {
         destinationAddress?: string;
         creationFee?: string;
     }>({});
-    
+
     // Order tracking state
     const [activeOrder, setActiveOrder] = useState<{
         orderHash: string;
@@ -65,14 +65,14 @@ export default function SwapInterface() {
         completedAt?: string;
         error?: string;
     } | null>(null);
-    
+
     // New fields for dual addressing - updated with correct format for testing
     // Test data with proper ICP address format (xxxxx-xxxxx-xxxxx-xxxxx-xxx) matching resolver validation
     const [makerEVMAddress, setMakerEVMAddress] = useState('0xBd37AfeE5e9f60ee092DC2471dB260BC623Cf836');
-    const [makerICPAddress, setMakerICPAddress] = useState('oo5cv-hzswp-ri7ue-vvvly-lahts-6f6lo-dpnad-ghfju-rzwgr-wpumc-bae'); // Fixed format: 5-5-5-5-3
+    const [makerICPAddress, setMakerICPAddress] = useState('qj7jl-zymjt-izpkm-72urh-zb3od-y27gj-wascg-bepck-mearo-bnj2o-rae'); // Fixed format: 5-5-5-5-3
     const [takerEVMAddress, setTakerEVMAddress] = useState('0x7D8FcE4Eb0648f6aa98a5a2d33A8CE865C938A6e');
     const [takerICPAddress, setTakerICPAddress] = useState('f5hu5-c5eqs-4m2bm-fxb27-5mnk2-lpbva-l3tb5-7xv5p-w65wt-a3uyd-lqe'); // Fixed format: 5-5-5-5-3
-    
+
     const { webapp, ledgerCanister } = useAuthClient();
     const { helper: evmHelper, account: evmAccount, isConnected: isEvmConnected, connect: connectEvm } = useEVMContract('base-sepolia');
 
@@ -83,7 +83,7 @@ export default function SwapInterface() {
             const response = await fetch(`${resolverUrl}/health`);
             const health = await response.json();
             console.log('🔋 Resolver health check:', health);
-            
+
             if (health.status === 'healthy') {
                 alert(`✅ Resolver is healthy and ready!\n\nURL: ${resolverUrl}\nUptime: ${Math.floor(health.uptime / 60)} minutes`);
             } else {
@@ -99,13 +99,13 @@ export default function SwapInterface() {
     const trackOrderStatus = async (orderHash: string, resolverUrl: string) => {
         let pollCount = 0;
         const maxPollAttempts = 360; // 30 minutes at 5 second intervals
-        
+
         const pollOrder = async () => {
             try {
                 pollCount++;
                 const response = await fetch(`${resolverUrl}/orders/${orderHash}`);
                 const orderData = await response.json();
-                
+
                 if (orderData.success) {
                     const order = orderData.order;
                     setActiveOrder({
@@ -116,22 +116,22 @@ export default function SwapInterface() {
                         completedAt: order.completedAt,
                         error: order.error
                     });
-                    
+
                     console.log(`[Poll ${pollCount}] Order ${orderHash.slice(0, 10)}... status:`, order.status);
-                    
+
                     // Show progress in steps with detailed logging
                     if (order.steps && order.steps.length > 0) {
                         console.log('🔄 Current steps:');
                         order.steps.forEach((step: { name: string; status: string; details?: Record<string, unknown>; startedAt?: string; completedAt?: string; error?: string }, index: number) => {
-                            const statusIcon = step.status === 'completed' ? '✅' : 
-                                             step.status === 'failed' ? '❌' : 
-                                             step.status === 'pending' ? '⏳' : '🔄';
+                            const statusIcon = step.status === 'completed' ? '✅' :
+                                step.status === 'failed' ? '❌' :
+                                    step.status === 'pending' ? '⏳' : '🔄';
                             console.log(`  ${statusIcon} ${index + 1}. ${step.name.replace(/_/g, ' ').toUpperCase()} - ${step.status}`);
                             if (step.error) console.log(`     ❌ Error: ${step.error}`);
                             if (step.details) console.log(`     📊 Details:`, step.details);
                         });
                     }
-                    
+
                     // Check if order is completed
                     if (order.status === 'completed') {
                         console.log('🎉 ORDER COMPLETED SUCCESSFULLY!');
@@ -149,7 +149,7 @@ export default function SwapInterface() {
                 } else {
                     console.warn(`Poll ${pollCount}: Order data not found or invalid response`);
                 }
-                
+
                 // Check if we should continue polling
                 if (pollCount >= maxPollAttempts) {
                     console.warn('Max polling attempts reached. Stopping order tracking.');
@@ -157,25 +157,25 @@ export default function SwapInterface() {
                     setActiveOrder(null);
                     return;
                 }
-                
+
                 // Continue polling if order is still active
                 setTimeout(pollOrder, 5000); // Poll every 5 seconds
             } catch (error) {
                 console.error(`Failed to poll order status (attempt ${pollCount}):`, error);
-                
+
                 // If we've had too many failures, stop
                 if (pollCount >= maxPollAttempts) {
                     alert('❌ Unable to track order status. Please check if the resolver is running.');
                     setActiveOrder(null);
                     return;
                 }
-                
+
                 // Retry with exponential backoff for network errors
                 const retryDelay = Math.min(10000 * Math.pow(1.5, Math.floor(pollCount / 10)), 30000);
                 setTimeout(pollOrder, retryDelay);
             }
         };
-        
+
         // Start polling immediately
         console.log(`🚀 Starting order tracking for ${orderHash.slice(0, 10)}...`);
         pollOrder();
@@ -216,8 +216,8 @@ export default function SwapInterface() {
                     amount: parseEther(fromAmount).toString(),
                     safetyDeposit: (parseEther(fromAmount) * BigInt(15) / BigInt(100)).toString(),
                     timelocks: {
-                        withdrawal: 1800,      // 30 minutes
-                        publicWithdrawal: 3600, // 1 hour
+                        withdrawal: 30,      // 30 seconds
+                        publicWithdrawal: 60, // 60 seconds (for fast testing)
                         cancellation: 43200,   // 12 hours
                         deployedAt: 0
                     }
@@ -343,7 +343,7 @@ export default function SwapInterface() {
                     // Submit order to resolver with dual addressing
                     const orderHash = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)),
                         byte => byte.toString(16).padStart(2, '0')).join('');
-                    
+
                     const order = {
                         orderHash,
                         srcChain: fromChain.id,
@@ -352,34 +352,34 @@ export default function SwapInterface() {
                         dstToken: toToken?.address || '0x0000000000000000000000000000000000000000',
                         srcAmount: parseEther(fromAmount).toString(),
                         dstAmount: parseEther(toAmount).toString(),
-                        
+
                         // EVM→ICP dual addressing (required by resolver)
                         makerICPAddress: makerICPAddress,     // Where maker receives ICP tokens
                         makerEVMAddress: evmAccount,          // Maker's EVM address (connected wallet)
                         takerEVMAddress: takerEVMAddress,     // Taker's EVM address for validation
                         takerICPAddress: takerICPAddress,     // Taker's ICP address (optional but good to have)
-                        
+
                         // Legacy fields for backward compatibility (will be deprecated)
                         maker: makerICPAddress, // ICP address that will receive the ICP tokens
                         taker: evmAccount, // EVM address that deposited and will complete the swap
-                        
+
                         deadline: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
                         timelocks: {
-                            withdrawal: 1800,      // 30 minutes
-                            publicWithdrawal: 3600, // 1 hour
+                            withdrawal: 30,      // 30 seconds
+                            publicWithdrawal: 60, // 60 seconds (for fast testing)
                             cancellation: 43200    // 12 hours
                         }
                     };
 
                     // Submit order to resolver using environment variable
                     const resolverUrl = import.meta.env.VITE_RESOLVER_URL || 'http://localhost:3000';
-                    
+
                     console.log('� EVM→ICP Order Validation Debug:');
                     console.log('  📋 Complete Order Object:', JSON.stringify(order, null, 2));
                     console.log('  🏷️ Field-by-Field Validation:');
                     console.log('    orderHash:', order.orderHash, '✓ Format:', /^0x[a-fA-F0-9]{64}$/.test(order.orderHash));
                     console.log('    srcChain:', order.srcChain, '✓ Valid:', ['icp', 'ethereum', 'base'].includes(order.srcChain));
-                    console.log('    dstChain:', order.dstChain, '✓ Valid:', ['icp', 'ethereum', 'base'].includes(order.dstChain)); 
+                    console.log('    dstChain:', order.dstChain, '✓ Valid:', ['icp', 'ethereum', 'base'].includes(order.dstChain));
                     console.log('    srcAmount:', order.srcAmount, '✓ Format:', /^[0-9]+$/.test(order.srcAmount));
                     console.log('    dstAmount:', order.dstAmount, '✓ Format:', /^[0-9]+$/.test(order.dstAmount));
                     console.log('    makerICPAddress:', order.makerICPAddress, '✓ Format:', /^[a-z0-9]{5}-[a-z0-9]{5}-[a-z0-9]{5}-[a-z0-9]{5}-[a-z0-9]{3}$/.test(order.makerICPAddress));
@@ -388,11 +388,11 @@ export default function SwapInterface() {
                     console.log('    takerICPAddress:', order.takerICPAddress, '✓ Format:', /^[a-z0-9]{5}-[a-z0-9]{5}-[a-z0-9]{5}-[a-z0-9]{5}-[a-z0-9]{3}$/.test(order.takerICPAddress));
                     console.log('    deadline:', order.deadline, '✓ Future:', order.deadline > Math.floor(Date.now() / 1000));
                     console.log('    timelocks:', order.timelocks);
-                    
+
                     // Frontend validation before sending to resolver
                     const validateOrder = () => {
                         const errors = [];
-                        
+
                         // Check required fields
                         if (!order.orderHash || !/^0x[a-fA-F0-9]{64}$/.test(order.orderHash)) {
                             errors.push('Invalid orderHash format');
@@ -409,19 +409,19 @@ export default function SwapInterface() {
                         if (!order.dstAmount || !/^[0-9]+$/.test(order.dstAmount)) {
                             errors.push('Invalid dstAmount format');
                         }
-                        
+
                         return errors;
                     };
-                    
+
                     const validationErrors = validateOrder();
                     if (validationErrors.length > 0) {
                         console.error('❌ Order validation failed:', validationErrors);
                         alert(`❌ Order Validation Failed:\n\n${validationErrors.join('\n')}`);
                         return;
                     }
-                    
+
                     console.log('✅ Order validation passed');
-                    
+
                     try {
                         const response = await fetch(`${resolverUrl}/orders`, {
                             method: 'POST',
@@ -432,11 +432,11 @@ export default function SwapInterface() {
                         });
 
                         const resolverResult = await response.json();
-                        
+
                         if (resolverResult.success) {
                             console.log('✅ Order submitted to resolver successfully:', resolverResult);
                             alert(`🚀 Order Submitted Successfully! 🚀\n\nOrder Hash: ${orderHash.slice(0, 10)}...\nFlow: ${fromChain.name} → ${toChain.name}\nAmount: ${fromAmount} ${fromToken?.symbol} → ${toAmount} ${toToken?.symbol}\n\nThe resolver is now processing your cross-chain swap.\nYou can track progress below and in the console.`);
-                            
+
                             // Start tracking order status
                             trackOrderStatus(orderHash, resolverUrl);
                         } else {
@@ -461,7 +461,7 @@ export default function SwapInterface() {
                 // Submit ICP→EVM order to resolver  
                 const orderHash = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(32)),
                     byte => byte.toString(16).padStart(2, '0')).join('');
-                
+
                 const order = {
                     orderHash,
                     srcChain: fromChain.id,
@@ -470,27 +470,27 @@ export default function SwapInterface() {
                     dstToken: toToken?.address || '0x0000000000000000000000000000000000000000',
                     srcAmount: (parseFloat(fromAmount) * 100000000).toString(), // Convert ICP to e8s
                     dstAmount: parseEther(toAmount).toString(),
-                    
+
                     // ICP→EVM dual addressing (required by resolver)
                     makerEVMAddress: evmAccount,          // Where maker receives EVM tokens  
                     makerICPAddress: makerICPAddress,     // Maker's ICP address (who deposited)
                     takerICPAddress: takerICPAddress,     // Taker's ICP address for validation
                     takerEVMAddress: takerEVMAddress,     // Taker's EVM address (optional but good to have)
-                    
+
                     // Legacy fields for backward compatibility (will be deprecated)
                     maker: evmAccount, // EVM address that will receive tokens
                     taker: makerICPAddress, // ICP address that deposited
-                    
+
                     deadline: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
                     timelocks: {
-                        withdrawal: 1800,      // 30 minutes
-                        publicWithdrawal: 3600, // 1 hour
+                        withdrawal: 30,        // 30 seconds (for fast testing)
+                        publicWithdrawal: 60,  // 60 seconds (for fast testing)
                         cancellation: 43200    // 12 hours
                     }
                 };
 
                 const resolverUrl = import.meta.env.VITE_RESOLVER_URL || 'http://localhost:3000';
-                
+
                 console.log('� ICP→EVM Order Validation Debug:');
                 console.log('  📋 Complete Order Object:', JSON.stringify(order, null, 2));
                 console.log('  🏷️ Field-by-Field Validation:');
@@ -505,11 +505,11 @@ export default function SwapInterface() {
                 console.log('    takerEVMAddress:', order.takerEVMAddress, '✓ Format:', order.takerEVMAddress ? /^0x[a-fA-F0-9]{40}$/.test(order.takerEVMAddress) : 'optional');
                 console.log('    deadline:', order.deadline, '✓ Future:', order.deadline > Math.floor(Date.now() / 1000));
                 console.log('    timelocks:', order.timelocks);
-                
+
                 // Frontend validation for ICP→EVM order
                 const validateICPOrder = () => {
                     const errors = [];
-                    
+
                     // Check required fields
                     if (!order.orderHash || !/^0x[a-fA-F0-9]{64}$/.test(order.orderHash)) {
                         errors.push('Invalid orderHash format');
@@ -520,24 +520,24 @@ export default function SwapInterface() {
                     if (!order.dstAmount || !/^[0-9]+$/.test(order.dstAmount)) {
                         errors.push('Invalid dstAmount format');
                     }
-                    
+
                     // ICP→EVM validation
                     if (!order.makerEVMAddress) errors.push('Missing makerEVMAddress for ICP→EVM');
                     if (!order.makerICPAddress) errors.push('Missing makerICPAddress for ICP→EVM');
                     if (!order.takerICPAddress) errors.push('Missing takerICPAddress for ICP→EVM');
-                    
+
                     return errors;
                 };
-                
+
                 const validationErrors = validateICPOrder();
                 if (validationErrors.length > 0) {
                     console.error('❌ ICP→EVM Order validation failed:', validationErrors);
                     alert(`❌ ICP→EVM Order Validation Failed:\n\n${validationErrors.join('\n')}`);
                     return;
                 }
-                
+
                 console.log('✅ ICP→EVM Order validation passed');
-                
+
                 try {
                     const response = await fetch(`${resolverUrl}/orders`, {
                         method: 'POST',
@@ -548,11 +548,11 @@ export default function SwapInterface() {
                     });
 
                     const resolverResult = await response.json();
-                    
+
                     if (resolverResult.success) {
                         console.log('✅ ICP→EVM order submitted successfully:', resolverResult);
                         alert(`🚀 ICP→EVM Order Submitted! 🚀\n\nOrder Hash: ${orderHash.slice(0, 10)}...\nFlow: ${fromChain.name} → ${toChain?.name}\nAmount: ${fromAmount} ${fromToken?.symbol} → ${toAmount} ${toToken?.symbol}\n\nThe resolver is now processing your cross-chain swap.`);
-                        
+
                         // Start tracking order status
                         trackOrderStatus(orderHash, resolverUrl);
                     } else {
@@ -754,26 +754,25 @@ export default function SwapInterface() {
                                         </div>
                                     </div>
                                 </div>
-                                
+
                                 <div className="mb-4">
                                     <div className="flex items-center justify-between mb-2">
                                         <span className="text-sm text-gray-600">Status:</span>
-                                        <span className={`font-semibold px-3 py-1 rounded-full text-xs ${
-                                            activeOrder.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                            activeOrder.status === 'failed' ? 'bg-red-100 text-red-800' :
-                                            activeOrder.status === 'processing' ? 'bg-blue-100 text-blue-800' :
-                                            'bg-yellow-100 text-yellow-800'
-                                        }`}>
+                                        <span className={`font-semibold px-3 py-1 rounded-full text-xs ${activeOrder.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                                activeOrder.status === 'failed' ? 'bg-red-100 text-red-800' :
+                                                    activeOrder.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                                                        'bg-yellow-100 text-yellow-800'
+                                            }`}>
                                             {activeOrder.status.toUpperCase()}
                                         </span>
                                     </div>
-                                    
+
                                     {activeOrder.createdAt && (
                                         <div className="text-xs text-gray-500">
                                             Started: {new Date(activeOrder.createdAt).toLocaleString()}
                                         </div>
                                     )}
-                                    
+
                                     {activeOrder.status === 'processing' && (
                                         <div className="text-xs text-gray-500">
                                             ⏱️ Estimated completion: ~30-60 minutes
@@ -791,19 +790,17 @@ export default function SwapInterface() {
                                                 const isCompleted = step.status === 'completed';
                                                 const isFailed = step.status === 'failed';
                                                 const isPending = step.status === 'pending';
-                                                
+
                                                 return (
-                                                    <div key={index} className={`flex items-start space-x-3 p-2 rounded-lg ${
-                                                        isCompleted ? 'bg-green-50' : 
-                                                        isFailed ? 'bg-red-50' : 
-                                                        isPending ? 'bg-blue-50' : 'bg-gray-50'
-                                                    }`}>
-                                                        <div className={`w-4 h-4 rounded-full flex items-center justify-center mt-0.5 ${
-                                                            isCompleted ? 'bg-green-500' :
-                                                            isFailed ? 'bg-red-500' :
-                                                            isPending ? 'bg-blue-500 animate-pulse' :
-                                                            'bg-gray-400'
+                                                    <div key={index} className={`flex items-start space-x-3 p-2 rounded-lg ${isCompleted ? 'bg-green-50' :
+                                                            isFailed ? 'bg-red-50' :
+                                                                isPending ? 'bg-blue-50' : 'bg-gray-50'
                                                         }`}>
+                                                        <div className={`w-4 h-4 rounded-full flex items-center justify-center mt-0.5 ${isCompleted ? 'bg-green-500' :
+                                                                isFailed ? 'bg-red-500' :
+                                                                    isPending ? 'bg-blue-500 animate-pulse' :
+                                                                        'bg-gray-400'
+                                                            }`}>
                                                             {isCompleted && (
                                                                 <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
                                                                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -820,12 +817,11 @@ export default function SwapInterface() {
                                                                 <span className="text-sm font-medium text-gray-700 capitalize">
                                                                     {step.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                                                                 </span>
-                                                                <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                                                                    isCompleted ? 'bg-green-100 text-green-700' :
-                                                                    isFailed ? 'bg-red-100 text-red-700' :
-                                                                    isPending ? 'bg-blue-100 text-blue-700' :
-                                                                    'bg-gray-100 text-gray-700'
-                                                                }`}>
+                                                                <span className={`text-xs font-medium px-2 py-0.5 rounded ${isCompleted ? 'bg-green-100 text-green-700' :
+                                                                        isFailed ? 'bg-red-100 text-red-700' :
+                                                                            isPending ? 'bg-blue-100 text-blue-700' :
+                                                                                'bg-gray-100 text-gray-700'
+                                                                    }`}>
                                                                     {step.status}
                                                                 </span>
                                                             </div>
@@ -844,7 +840,7 @@ export default function SwapInterface() {
                                                 );
                                             })}
                                         </div>
-                                        
+
                                         {/* Progress bar */}
                                         <div className="mt-4">
                                             <div className="flex justify-between text-xs text-gray-600 mb-1">
@@ -854,17 +850,17 @@ export default function SwapInterface() {
                                                 </span>
                                             </div>
                                             <div className="w-full bg-gray-200 rounded-full h-2">
-                                                <div 
+                                                <div
                                                     className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                                                    style={{ 
-                                                        width: `${(activeOrder.steps.filter(s => s.status === 'completed').length / activeOrder.steps.length) * 100}%` 
+                                                    style={{
+                                                        width: `${(activeOrder.steps.filter(s => s.status === 'completed').length / activeOrder.steps.length) * 100}%`
                                                     }}
                                                 ></div>
                                             </div>
                                         </div>
                                     </div>
                                 )}
-                                
+
                                 {/* Tips for user */}
                                 {activeOrder.status === 'processing' && (
                                     <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">

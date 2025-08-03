@@ -11,6 +11,8 @@
   "dependencies": {
     "@dfinity/agent": "^3.1.0",
     "@dfinity/auth-client": "^3.1.0",
+    "@dfinity/identity": "^3.1.0",
+    "@dfinity/principal": "^3.1.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "ethers": "^6.15.0",

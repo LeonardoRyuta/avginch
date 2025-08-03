@@ -63,8 +63,8 @@ app.use(express.json({ limit: '1mb' }));
 // Configuration
 const config = {
     icp: {
-        canisterId: process.env.ICP_CANISTER_ID || 'rdmx6-jaaaa-aaaaa-aaadq-cai',
-        host: process.env.ICP_HOST || 'http://127.0.0.1:4943',
+        canisterId: process.env.ICP_CANISTER_ID || 'uzt4z-lp777-77774-qaabq-cai',
+        host: process.env.ICP_HOST || 'http://127.0.0.1:8080',
         isLocal: process.env.ICP_ENV === 'local'
     },
     evm: {
@@ -158,8 +158,8 @@ const orderSchema = Joi.object({
     
     deadline: Joi.number().integer().min(Math.floor(Date.now() / 1000)).required(),
     timelocks: Joi.object({
-        withdrawal: Joi.number().integer().min(300).max(86400).required(), // 5 min to 24 hours
-        publicWithdrawal: Joi.number().integer().min(600).max(172800).required(), // 10 min to 48 hours
+        withdrawal: Joi.number().integer().min(10).max(86400).required(), // 10 sec to 24 hours
+        publicWithdrawal: Joi.number().integer().min(30).max(172800).required(), // 30 sec to 48 hours (reduced for faster testing)
         cancellation: Joi.number().integer().min(3600).max(604800).required() // 1 hour to 7 days
     }).required()
 }).custom((order, helpers) => {
@@ -228,7 +228,7 @@ async function initializeManagers() {
         if (config.evm.privateKey && config.evm.icpEscrowFactoryAddress && config.evm.accessTokenAddress) {
             const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
             const wallet = new ethers.Wallet(config.evm.privateKey, provider);
-            
+
             evmManager = new EVMContractManager(
                 provider,
                 wallet,
@@ -321,7 +321,7 @@ async function processOrder(order) {
                 makerReceives: `${order.dstToken} on ${order.dstChain} at ${order.maker}`,
                 takerReceives: `${order.srcToken} on ${order.srcChain} at ${order.taker}`
             },
-            estimatedCompletionTime: new Date(Date.now() + orderData.timelocks.withdrawal * 1000).toISOString()
+            estimatedCompletionTime: new Date(Date.now() + (orderData.timelocks.publicWithdrawal + 30) * 1000).toISOString()
         };
         
     } catch (error) {
@@ -485,28 +485,51 @@ async function executeWithdrawal(orderData) {
     orderData.steps.push(step);
     
     try {
-        // First withdraw from source to get the funds
-        if (orderData.srcChain === 'icp') {
-            const result = await icpManager.withdrawFromICPSource(orderData);
-            logger.info(`ICP source withdrawal completed for order ${orderData.orderHash}`);
-        } else {
-            if (!evmManager) {
-                throw new Error('EVM manager not initialized');
-            }
-            const result = await evmManager.withdrawFromEVMSource(orderData);
-            logger.info(`EVM source withdrawal completed for order ${orderData.orderHash}, tx: ${result.transactionHash}`);
-        }
+        logger.info(`Executing public withdrawal for order ${orderData.orderHash}`);
+        logger.info(`Order timelocks: withdrawal=${orderData.timelocks.withdrawal}s, publicWithdrawal=${orderData.timelocks.publicWithdrawal}s`);
         
-        // Then withdraw from destination to complete the swap
-        if (orderData.dstChain === 'icp') {
-            const result = await icpManager.withdrawFromICPDestination(orderData);
-            logger.info(`ICP destination withdrawal completed for order ${orderData.orderHash}`);
-        } else {
+        // Determine withdrawal strategy based on swap direction
+        const isEVMToICP = orderData.srcChain !== 'icp' && orderData.dstChain === 'icp';
+        const isICPToEVM = orderData.srcChain === 'icp' && orderData.dstChain !== 'icp';
+        
+        if (isEVMToICP) {
+            // EVM → ICP: First withdraw from EVM source, then ICP destination
+            logger.info(`EVM→ICP swap: Starting EVM source withdrawal first`);
+            
+            // Step 1: Withdraw from EVM source
             if (!evmManager) {
                 throw new Error('EVM manager not initialized');
             }
-            const result = await evmManager.withdrawFromEVMDestination(orderData);
-            logger.info(`EVM destination withdrawal completed for order ${orderData.orderHash}, tx: ${result.transactionHash}`);
+            logger.info(`Attempting EVM source withdrawal for order ${orderData.orderHash}`);
+            const evmResult = await evmManager.withdrawFromEVMSource(orderData);
+            logger.info(`EVM source withdrawal completed for order ${orderData.orderHash}, tx: ${evmResult.transactionHash}`);
+            
+            logger.info(`Attempting ICP destination public withdrawal for order ${orderData.orderHash}`);
+            // const icpResult = await icpManager.withdrawFromICPDestination(orderData);
+            logger.info(`ICP destination withdrawal completed for order ${orderData.orderHash}`);
+            
+        } else if (isICPToEVM) {
+            // ICP → EVM: First withdraw from ICP source, then EVM destination
+            logger.info(`ICP→EVM swap: Starting ICP source withdrawal first`);
+            
+            // Step 1: Withdraw from ICP source
+            logger.info(`Attempting ICP source public withdrawal for order ${orderData.orderHash}`);
+            const icpResult = await icpManager.withdrawFromICPSource(orderData);
+            logger.info(`ICP source withdrawal completed for order ${orderData.orderHash}`);
+            
+            // Step 2: Wait a bit then withdraw from EVM destination
+            logger.info(`Waiting 10 seconds before EVM destination withdrawal...`);
+            await new Promise(resolve => setTimeout(resolve, 10000)); // 10 second delay
+            
+            if (!evmManager) {
+                throw new Error('EVM manager not initialized');
+            }
+            logger.info(`Attempting EVM destination withdrawal for order ${orderData.orderHash}`);
+            const evmResult = await evmManager.withdrawFromEVMDestination(orderData);
+            logger.info(`EVM destination withdrawal completed for order ${orderData.orderHash}, tx: ${evmResult.transactionHash}`);
+            
+        } else {
+            throw new Error(`Unsupported swap direction: ${orderData.srcChain} → ${orderData.dstChain}`);
         }
         
         step.status = 'completed';
@@ -531,13 +554,29 @@ async function executeWithdrawal(orderData) {
         orderData.error = error.message;
         
         logger.error(`Failed to execute withdrawal for order ${orderData.orderHash}:`, error);
+        
+        // Log specific error details based on error type
+        if (error.message.includes('Unauthorized')) {
+            logger.error(`ICP Authorization Error: The resolver may not have permission to withdraw yet. This could be due to timing constraints on the ICP canister.`);
+        } else if (error.message.includes('execution reverted')) {
+            logger.error(`EVM Contract Error: The withdrawal transaction was reverted. This could be due to insufficient balance, timing constraints, or contract state issues.`);
+        } else if (error.message.includes('unknown custom error')) {
+            logger.error(`EVM Custom Error: The contract returned a custom error code. Check the contract state and parameters.`);
+        }
+        
+        logger.error(`Error details: ${JSON.stringify(error.message)}`);
         throw error;
     }
 }
 
 function scheduleWithdrawal(orderData) {
-    // Schedule withdrawal after the withdrawal timelock period
-    const withdrawalDelay = orderData.timelocks.withdrawal * 1000; // Convert to milliseconds
+    // For public withdrawal (resolver-initiated), we need to wait for the publicWithdrawal timelock
+    // Since we're using public withdrawal only, wait for the longer timelock
+    const publicWithdrawalDelay = orderData.timelocks.withdrawal * 1000; // Convert to milliseconds
+    
+    // Add extra buffer time for ICP canister to process properly (30 extra seconds)
+    // const bufferTime = 30000; // 30 seconds buffer
+    const totalDelay = publicWithdrawalDelay;
     
     setTimeout(async () => {
         try {
@@ -553,13 +592,44 @@ function scheduleWithdrawal(orderData) {
                 return;
             }
             
+            logger.info(`Starting public withdrawal for order ${orderData.orderHash} after ${totalDelay}ms delay (${orderData.timelocks.publicWithdrawal}s + 30s buffer)`);
             await executeWithdrawal(orderData);
         } catch (error) {
             logger.error(`Scheduled withdrawal failed for order ${orderData.orderHash}:`, error);
+            
+            // If withdrawal fails, schedule a retry in 60 seconds (longer for ICP)
+            setTimeout(async () => {
+                try {
+                    if (activeOrders.has(orderData.orderHash)) {
+                        logger.info(`Retrying withdrawal for order ${orderData.orderHash} after 60s delay`);
+                        await executeWithdrawal(orderData);
+                    }
+                } catch (retryError) {
+                    logger.error(`Retry withdrawal also failed for order ${orderData.orderHash}:`, retryError);
+                    
+                    // Final retry after another 60 seconds
+                    setTimeout(async () => {
+                        try {
+                            if (activeOrders.has(orderData.orderHash)) {
+                                logger.info(`Final retry withdrawal for order ${orderData.orderHash}`);
+                                await executeWithdrawal(orderData);
+                            }
+                        } catch (finalError) {
+                            logger.error(`Final retry also failed for order ${orderData.orderHash}:`, finalError);
+                            // Mark order as failed
+                            if (activeOrders.has(orderData.orderHash)) {
+                                const order = activeOrders.get(orderData.orderHash);
+                                order.status = 'failed';
+                                order.error = `All withdrawal attempts failed: ${finalError.message}`;
+                            }
+                        }
+                    }, 60000); // Final retry after 60 seconds
+                }
+            }, 60000); // First retry after 60 seconds
         }
-    }, withdrawalDelay);
+    }, totalDelay);
     
-    logger.info(`Scheduled withdrawal for order ${orderData.orderHash} in ${withdrawalDelay}ms`);
+    logger.info(`Scheduled public withdrawal for order ${orderData.orderHash} in ${totalDelay}ms (${orderData.timelocks.publicWithdrawal}s + 30s buffer)`);
 }
 
 // API Routes
